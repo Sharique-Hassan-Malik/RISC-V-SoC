@@ -1,0 +1,26 @@
+# synth_top.pcf — iCEstick (iCE40HX1K-TQ144) pin constraints
+#
+# This design requires a 25 MHz pixel clock.  On the iCEstick the on-board
+# oscillator is 12 MHz; you need either:
+#   (a) An external 25 MHz crystal on J3, or
+#   (b) An SB_PLL40_CORE instantiation tuned to produce ~25 MHz from 12 MHz.
+#
+# VGA connector wiring:
+#   Connect vga_r to VGA pin 1  through 470 Ω (or direct for 1-bit colour)
+#   Connect vga_g to VGA pin 2  through 470 Ω
+#   Connect vga_b to VGA pin 3  through 470 Ω
+#   Connect vga_hs to VGA pin 13 direct
+#   Connect vga_vs to VGA pin 14 direct
+#   Connect GND to VGA pins 5,6,7,8,10
+
+set_io clk_25   21    # external 25 MHz source (replace 12 MHz OSC or use J3)
+set_io rst_n    47    # active-low reset — J1 pin 1 or on-board user button
+
+set_io vga_r    61    # J2 header
+set_io vga_g    62
+set_io vga_b    63
+set_io vga_hs   56
+set_io vga_vs   55
+
+set_io led_busy 99    # iCEstick LED D1
+set_io led_done 98    # iCEstick LED D2

@@ -1,0 +1,21 @@
+# synth_top.pcf — iCEstick (iCE40HX1K-TQ144) pin constraints
+#
+# Reference: iCEstick user guide, Lattice iCE40 pinout spreadsheet.
+#
+# MIDI input: J1 header pin 3.  Feed from PC-900 or 6N138 optocoupler.
+#             The iCE40 input is 3.3 V logic; connect the collector output
+#             through a 10 kΩ pull-up to 3.3 V.
+#
+# PDM audio output: J2 header pin 3.  Connect through 4.7 kΩ + 10 nF RC
+#                   to the audio jack tip.
+
+set_io clk          21    # 12 MHz oscillator (GBIN6)
+set_io midi_rx_pin  44    # J1-3 (PMOD)
+set_io pdm_out_pin  78    # J2-3 (PMOD)
+
+# Five on-board LEDs (active low)
+set_io led0         99
+set_io led1         98
+set_io led2         97
+set_io led3         96
+set_io led4         95

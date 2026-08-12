@@ -1,0 +1,32 @@
+# Simulation artifacts
+*.vvp
+*.vcd
+*.fst
+*.lxt
+work/
+transcript
+*.wlf
+xsim.dir/
+*.jou
+*.log
+*.pb
+
+# Synthesis / place-and-route outputs
+*.asc
+*.bin
+*.bit
+*.json
+*.rpt
+build/
+
+# Python
+__pycache__/
+*.pyc
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*~
+*.swp
+.vscode/
+.idea/

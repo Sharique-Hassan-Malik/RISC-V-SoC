@@ -1,0 +1,7 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+rtl/*.json
+rtl/*.asc
+rtl/*.bin
+rtl/prog.hex

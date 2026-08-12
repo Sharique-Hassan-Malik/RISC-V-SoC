@@ -1,0 +1,31 @@
+# pong_top.pcf — iCEstick (iCE40HX1K-TQ144) pin constraints for Pong.
+#
+# VGA connector wiring:
+#   vga_pixel → 470 Ω each to VGA pins 1 (R), 2 (G) and 3 (B) for white output.
+#   VGA pins 5,6,7,8,10 → GND.
+#   vga_hsync → VGA pin 13, vga_vsync → VGA pin 14.
+#
+# Buttons (4× tactile switches to GND with 10 kΩ pull-ups to 3.3 V → active high):
+#   Alternatively use 5 iCEstick PMOD header pins with external pull-ups.
+#
+# Clock: 25 MHz from external source on pin 21, or use SB_PLL40_CORE to
+# generate 25 MHz from the 12 MHz on-board oscillator.
+
+set_io clk_25         21     # 25 MHz clock input
+
+# Buttons — J1 PMOD header (active high with external pull-up resistors)
+set_io btn_l_up_raw    44    # J1-3
+set_io btn_l_down_raw  45    # J1-4
+set_io btn_r_up_raw    47    # J1-5
+set_io btn_r_down_raw  48    # J1-6
+set_io btn_rst_raw     56    # J1-7
+
+# VGA — J2 PMOD header
+set_io vga_pixel      61     # tie R/G/B all together through 470 Ω each
+set_io vga_hsync      56
+set_io vga_vsync      55
+
+# On-board LEDs (active low)
+set_io led_l_score    99
+set_io led_r_score    98
+set_io led_game_over  97

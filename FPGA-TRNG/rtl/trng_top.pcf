@@ -1,0 +1,13 @@
+# trng_top.pcf — iCEstick (iCE40HX1K-TQ144) pin constraints.
+#
+# UART TX output (pin 61, J2-1) → USB-serial adapter RX.
+# Connect the USB-serial adapter GND to iCEstick GND.
+# Baud: 115200, 8N1.
+#
+# Reset: active-low push button or pull to VCC.
+
+set_io clk      21    # 12 MHz on-board oscillator
+set_io rst_n    47    # active-low reset (J1 header pin or tied to VCC)
+set_io uart_tx  61    # J2-1 (PMOD header)
+set_io led0     99    # on-board LED D1 (active low)
+set_io led1     98    # on-board LED D2

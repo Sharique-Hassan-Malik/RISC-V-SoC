@@ -1,0 +1,16 @@
+# c8.pcf — iCEstick Lattice iCE40HX1K pin constraints
+#
+# iCEstick pinout (from iCEstick User Guide UG-ICESTICK Rev 1.0):
+#   12 MHz clock:  J3  (pin 21 on iCE40HX1K, net CLK)
+#   LED D1: 99
+#   LED D2: 98
+#   LED D3: 97
+#   LED D4: 96
+#   LED D5: 95
+
+set_io clk12   21
+set_io leds[0] 99
+set_io leds[1] 98
+set_io leds[2] 97
+set_io leds[3] 96
+set_io leds[4] 95

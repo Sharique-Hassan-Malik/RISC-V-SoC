@@ -1,0 +1,16 @@
+# iCEstick (iCE40HX1K-TQ144) constraints
+# Minimal set for clocking and UART/LED status output.
+
+set_io clk        21    # 12 MHz oscillator
+set_io rst_n_btn  47    # active-low pushbutton via PMOD J2
+
+# UART for streaming ciphertexts out at high throughput
+set_io uart_tx    8
+set_io uart_rx    9
+
+# Status LEDs (5 on-board green LEDs)
+set_io led[0]    99
+set_io led[1]    98
+set_io led[2]    97
+set_io led[3]    96
+set_io led[4]    95
