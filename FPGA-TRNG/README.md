@@ -1,4 +1,4 @@
-# fpga-trng
+# FPGA TRNG
 
 A hardware True Random Number Generator for the Lattice iCEstick (iCE40HX1K)
 that harvests entropy from FPGA ring-oscillator jitter, decorrelates the raw

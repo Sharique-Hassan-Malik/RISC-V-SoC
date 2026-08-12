@@ -1,4 +1,4 @@
-# fpga-poly-synth
+# FPGA Poly Synth
 
 A 4-voice polyphonic synthesiser implemented in Verilog targeting the Lattice
 iCEstick (iCE40HX1K-TQ144).  MIDI notes arrive on a DIN-5 connector through a

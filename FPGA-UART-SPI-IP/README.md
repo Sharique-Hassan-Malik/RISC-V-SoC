@@ -1,4 +1,4 @@
-# fpga-uart-spi-ip
+# FPGA UART SPI IP
 
 Parameterized, reusable UART and SPI master IP cores for FPGA designs.
 Both cores expose an APB slave interface, have independently configurable

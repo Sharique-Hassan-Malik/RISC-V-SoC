@@ -1,4 +1,4 @@
-# fpga-riscv-core
+# FPGA RISCV Core
 
 A 5-stage pipelined RV32I processor in SystemVerilog.  The pipeline covers
 the complete base integer ISA — all ALU operations, loads and stores with

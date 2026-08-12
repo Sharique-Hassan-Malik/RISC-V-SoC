@@ -1,4 +1,4 @@
-# fpga-vga-mandelbrot
+# FPGA VGA Mandelbrot
 
 A 640×480 VGA display driven from a hardware-pipelined Mandelbrot set renderer
 written entirely in VHDL.  There is no soft-core CPU anywhere in the design.

@@ -1,4 +1,4 @@
-# fpga-pong
+# FPGA Pong
 
 A complete two-player Pong game implemented as pure synchronous digital
 logic in Verilog.  Ball physics, paddle movement, score counting, collision
