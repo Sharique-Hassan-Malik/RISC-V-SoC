@@ -1,0 +1,7 @@
+# socgen — the memory map, the assembler and the build harness — is standard
+# library only. The hardware needs simulators, which come from the system
+# package manager, not pip:
+#
+#   apt install iverilog verilator ghdl yosys
+#
+pytest>=7

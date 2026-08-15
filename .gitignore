@@ -1,4 +1,3 @@
-# Python
 __pycache__/
 *.py[cod]
 *.egg-info/
@@ -6,32 +5,13 @@ __pycache__/
 .venv/
 venv/
 
-# Rust
-target/
-
-# JVM / Android / Gradle
-build/
-.gradle/
-local.properties
-*.apk
-*.class
-
-# C / build artifacts
+# simulation and synthesis output
+.build/
+*.vvp
+*.vcd
+*.fst
+obj_dir/
+work-obj*.cf
 *.o
-*.elf
-*.hex
 *.bin
-!**/assets/*.bin
-
-# generated data / large artifacts
-*.npz
-.bench/
-.run/
-.results/
-.state/
-node_modules/
-
-# editor / OS
-.DS_Store
-.idea/
-.vscode/
+program.hex

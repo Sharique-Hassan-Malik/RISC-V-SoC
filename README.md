@@ -1,31 +1,146 @@
-# FPGA & Digital Design
+# RISC-V SoC
 
-Hardware described in Verilog/SystemVerilog: soft CPUs (including a RISC-V core), reusable peripheral IP, a hardware AES accelerator, and graphics/audio demos, with Python testbenches and cocotb simulation.
+A five-stage RV32I core, an AES-128 accelerator, UART and SPI IP, a
+ring-oscillator TRNG, and three graphics/audio designs — plus the thing that
+turns eight separate FPGA projects into one system: **a memory map both the
+hardware and the firmware are generated from**, and a build harness that knows
+how to simulate Verilog, SystemVerilog and VHDL.
 
-A collection of 8 self-contained projects. Each lives in its own subdirectory with its own `README.md` and `LICENSE` (most also include an `ARCHITECTURE.md` and a test suite), and can be built and run independently.
-
-## Projects
-
-| project | what it is |
-|---|---|
-| [`AES128-Accelerator`](./AES128-Accelerator) | A fully pipelined AES-128 encryption core in Verilog with an AXI4-Lite slave wrapper, verified against FIPS 197 test vectors. |
-| [`C8-CPU`](./C8-CPU) | A complete custom 8-bit RISC CPU implemented in Verilog, targeting the Lattice iCE40HX1K on an iCEstick. |
-| [`FPGA-Poly-Synth`](./FPGA-Poly-Synth) | A 4-voice polyphonic synthesiser implemented in Verilog targeting the Lattice iCEstick (iCE40HX1K-TQ144). |
-| [`FPGA-Pong`](./FPGA-Pong) | A complete two-player Pong game implemented as pure synchronous digital logic in Verilog. |
-| [`FPGA-RISCV-Core`](./FPGA-RISCV-Core) | A 5-stage pipelined RV32I processor in SystemVerilog. |
-| [`FPGA-TRNG`](./FPGA-TRNG) | A hardware True Random Number Generator for the Lattice iCEstick (iCE40HX1K) that harvests entropy from FPGA ring-oscillator jitter, decorrelates t… |
-| [`FPGA-UART-SPI-IP`](./FPGA-UART-SPI-IP) | Parameterized, reusable UART and SPI master IP cores for FPGA designs. |
-| [`FPGA-VGA-Mandelbrot`](./FPGA-VGA-Mandelbrot) | A 640×480 VGA display driven from a hardware-pipelined Mandelbrot set renderer written entirely in VHDL. |
-
-## Repository layout
-
-Each subdirectory is a standalone project; there is no shared build. Enter one and follow its README:
-
-```bash
-cd AES128-Accelerator
-cat README.md
+```
+soc modules              # what is here, in which HDL, and how to run it
+soc map                  # the memory map
+soc gen                  # regenerate the SV header, the C header and the firmware
+soc sim                  # simulate everything, including the SoC
+soc lint                 # Verilator lint over the synthesisable RTL
 ```
 
-## License
+```
+$ soc sim
 
-MIT — see the `LICENSE` file in each project.
+  core:riscv                 PASS                                 9.6s
+  uart-spi:uart              PASS                                45.3s
+  uart-spi:spi               PASS                                25.2s
+  aes:core                   PASS                                 0.8s
+  trng:trng                  PASS                                 0.2s
+  pong:ball                  PASS                                 0.0s
+  mandelbrot:mandelbrot      PASS                                25.2s
+  synth:synth                PASS                               170.1s
+  core:soc                   PASS                                29.5s
+```
+
+## The SoC
+
+```
+$ soc sim --only soc
+
+  SoC: RV32I core + UART + AES over the generated memory map
+
+  PASS: core executed instructions
+  PASS: program reached the AES window
+  PASS: program reached the UART window
+  PASS: AES produced the FIPS-197 ciphertext
+```
+
+That last line is the whole point. A program — assembled by `socgen/asm.py`
+from the addresses in `socgen/memmap.py` — runs on the RISC-V core, is routed by
+the address decoder in `rtl/soc_top.sv`, drives the AES accelerator through a
+register adapter, and produces the FIPS-197 §C.1 ciphertext. None of the eight
+projects could test that alone, because none of them contained more than one
+piece of it.
+
+| Region | Base | Size | Purpose |
+|---|---|---|---|
+| `ram` | `0x00000000` | 64 kB | Data memory |
+| `uart` | `0x10000000` | 4 kB | UART with FIFO |
+| `spi` | `0x10001000` | 4 kB | SPI master |
+| `aes` | `0x20000000` | 4 kB | AES-128 accelerator |
+| `trng` | `0x30000000` | 4 kB | Entropy source (VHDL; attaches at synthesis) |
+
+The map is a Python table. `soc gen` emits `rtl/soc_map.svh` for the decoder,
+`sw/soc_map.h` for firmware, and the test program — and a test fails if the
+committed headers no longer match the table. A memory map that exists in three
+places drifts, and the symptom is a store that silently goes nowhere.
+
+## The eight modules
+
+| Module | HDL | What it is |
+|---|---|---|
+| [`core`](modules/core) | SystemVerilog | Five-stage RV32I: hazard detection, forwarding, branch prediction, performance counters. |
+| [`aes`](modules/aes) | Verilog | Round-based AES-128 with an AXI-lite wrapper, checked against FIPS-197. |
+| [`uart-spi`](modules/uart-spi) | SystemVerilog | Parameterised UART with a synchronous FIFO; SPI master covering all four modes. |
+| [`trng`](modules/trng) | VHDL | Ring-oscillator entropy, von Neumann de-biasing, AES-S-box whitening, NIST STS tooling. |
+| [`cpu8`](modules/cpu8) | Verilog | An 8-bit accumulator machine with its own assembler and a Python ISS to check the RTL against. |
+| [`pong`](modules/pong) | Verilog | VGA timing, sprites, collision, scoring — a game in fabric. |
+| [`mandelbrot`](modules/mandelbrot) | VHDL | Fixed-point Mandelbrot into a framebuffer and VGA, with a Python model of the arithmetic. |
+| [`synth`](modules/synth) | Verilog | Polyphonic synthesiser: voice allocation, DDS, biquad filter, PWM DAC. |
+
+## The build harness
+
+Each project knew how to build itself and none of it was written down. What
+`socgen/toolchain.py` encodes, and the tests exercise:
+
+- The core is SystemVerilog with a `localparam` assignment pattern **Icarus
+  rejects**, so it needs Verilator.
+- Several modules `` `include `` a package by bare filename, so the tool has to
+  run **from the module's own directory**. From anywhere else the include is
+  simply not found.
+- The GHDL packaged on Debian uses the mcode backend, where `ghdl -e` writes no
+  binary at all; VHDL is analysed and then run with `ghdl -r`.
+- A VHDL testbench with free-running oscillators never terminates, so it needs
+  `--stop-time`.
+- **A simulator exits zero after a failed assertion**, so every bench declares a
+  string it prints when it is satisfied, and the harness checks for that rather
+  than trusting the return code.
+
+## What putting them together found
+
+**The two AES S-boxes agree.** The accelerator has one in Verilog; the TRNG's
+whitener has one in VHDL. Same 256 bytes, written twice, in different syntax,
+never compared — until a test parsed both. They match, and both are proper
+permutations. That test would have caught a single-digit typo that no amount of
+reading would.
+
+**Two real defects in the core**, both invisible to its own testbench:
+
+1. A loop whose body is a *single* instruction followed by a backward branch
+   runs the body once too many. Two or more instructions behave correctly —
+   which is exactly why the core's own loop test (two-instruction body) never
+   saw it. There is a committed reproducer in `sim/tb_defects.sv`; it fails, on
+   purpose, and will start passing the day the core is fixed.
+2. Loads from a peripheral do not reach the register file, though loads from
+   RAM and writes to peripherals both work. The SoC firmware waits a fixed
+   number of cycles instead of polling a status register, with a comment saying
+   why.
+
+**One fix applied.** The branch-misprediction check compared the outcome
+against the BHT's contents *at resolution time* rather than against the
+prediction actually made when the branch was fetched. Those differ whenever the
+same branch is in flight twice — a tight loop — because an earlier iteration
+updates the entry while a later one is still in the pipeline. The prediction now
+travels down the pipeline with its instruction. The core's twenty tests pass
+unchanged.
+
+Neither remaining defect is papered over: they are documented, reproduced, and
+worked around visibly.
+
+## Using one module on its own
+
+```bash
+cd modules/core       && verilator --binary -y rtl --top-module tb_riscv rtl/*.sv sim/tb_riscv.sv
+cd modules/aes        && iverilog -o aes.vvp rtl/*.v sim/tb_aes128_core.v && vvp aes.vvp
+cd modules/trng       && ghdl -a --std=08 rtl/*.vhd sim/*.vhd && ghdl -r --std=08 tb_trng --stop-time=500us
+cd modules/cpu8       && python sim/sim.py
+```
+
+Or `soc sim --only aes`, which does the same thing with the flags already right.
+
+## Tests
+
+```bash
+pytest -m "not slow"     # 69 tests: map, assembler, S-box cross-check — under a second
+pytest                   # adds every hardware simulation, several minutes
+```
+
+## Licence
+
+MIT — see [LICENSE](LICENSE).
