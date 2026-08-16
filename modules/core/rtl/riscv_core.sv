@@ -129,19 +129,32 @@ module riscv_core (
     logic        predict_taken_if;
     logic        predicted_fetch;
     logic        ifid_predicted, idex_predicted;
+    // A redirect has to kill TWO fetched instructions, not one: the one in
+    // IF/ID, and the one still inside the instruction memory whose address was
+    // presented before the redirect. `flush_if_id` clears the first. This bit
+    // marks the second as wrong-path so it becomes a NOP when it arrives.
+    //
+    // Without it, the in-flight instruction lands in IF/ID one cycle *after*
+    // the flush and executes. On a loop whose body is a single instruction it
+    // is the body itself, so the loop runs one extra iteration — which is why
+    // a two-instruction body hid this: the stale fetch was then the *second*
+    // body instruction, which the flush window already covered.
+    logic        fetch_valid;
 
     always_ff @(posedge clk) begin
-        if (rst) begin
+        if (rst || flush_if_id) begin
             pc_fetch        <= 32'd0;
             predicted_fetch <= 1'b0;
+            fetch_valid     <= 1'b0;
         end else if (!stall_id) begin
             pc_fetch        <= pc_if;
             predicted_fetch <= predict_taken_if;
+            fetch_valid     <= 1'b1;
         end
     end
 
     always_ff @(posedge clk) begin
-        if (rst || flush_if_id) begin
+        if (rst || flush_if_id || !fetch_valid) begin
             ifid_pc        <= 32'd0;
             ifid_instr     <= 32'h0000_0013;   // NOP
             ifid_predicted <= 1'b0;

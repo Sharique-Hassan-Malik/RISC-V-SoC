@@ -72,12 +72,24 @@ module if_stage (
     assign bht_idx_fetch  = pc_if[BHT_IDX_W+1:2];
     assign bht_idx_update = ex_branch_pc[BHT_IDX_W+1:2];
 
-    wire predict_taken = bht[bht_idx_fetch][1];
+    // ---- Branch target buffer (BTB) — direct-mapped, tagged --------------
+    // Stores the last-seen target for each BHT index, and the rest of the PC
+    // that put it there.
+    //
+    // The tag is not decoration. Without it, PC[7:2] is the whole key, so two
+    // addresses 256 bytes apart share an entry — and a prediction is made from
+    // the PC alone, before the instruction is fetched, let alone decoded. A
+    // NOP at 0x110 therefore inherits the strongly-taken state of the loop
+    // branch at 0x10 and sends the fetch to that branch's target. The core
+    // then executes a loop it was never asked to run.
+    localparam TAG_W = 32 - (BHT_IDX_W + 2);
+    logic [31:0]       btb     [0:BHT_ENTRIES-1];
+    logic [TAG_W-1:0]  btb_tag [0:BHT_ENTRIES-1];
 
-    // ---- Branch target buffer (BTB) — simple direct-mapped cache ---------
-    // Stores the last-seen target for each BHT index.
-    // Used to predict the target address when predict_taken is asserted.
-    logic [31:0] btb [0:BHT_ENTRIES-1];
+    wire [TAG_W-1:0] tag_fetch  = pc_if[31:BHT_IDX_W+2];
+    wire [TAG_W-1:0] tag_update = ex_branch_pc[31:BHT_IDX_W+2];
+
+    wire predict_taken = bht[bht_idx_fetch][1] && (btb_tag[bht_idx_fetch] == tag_fetch);
 
     // ---- PC register -----------------------------------------------------
     logic [31:0] pc_next;
@@ -87,13 +99,15 @@ module if_stage (
         if (rst) begin
             pc_reg <= 32'h0000_0000;
             for (int i = 0; i < BHT_ENTRIES; i++) begin
-                bht[i] <= 2'b01;   // initialise to Weakly Not Taken
-                btb[i] <= 32'h4;   // harmless default
+                bht[i]     <= 2'b01;   // initialise to Weakly Not Taken
+                btb[i]     <= 32'h4;   // harmless default
+                btb_tag[i] <= '1;      // matches no reachable PC until written
             end
         end else begin
             // BHT update on branch resolution
             if (ex_branch_valid) begin
-                btb[bht_idx_update] <= ex_branch_target;
+                btb[bht_idx_update]     <= ex_branch_target;
+                btb_tag[bht_idx_update] <= tag_update;
                 if (ex_branch_taken)
                     bht[bht_idx_update] <= (bht[bht_idx_update] == 2'b11)
                                           ? 2'b11 : bht[bht_idx_update] + 1;
@@ -121,13 +135,25 @@ module if_stage (
     // mismatch is invisible, no flush happens, and the speculatively fetched
     // instruction commits. The symptom is a single-instruction loop body
     // executing once too many.
-    assign mispredicted = ex_branch_valid && (ex_branch_taken != ex_predicted_taken);
+    // The second half is the safety net the tag makes rare rather than
+    // impossible. A prediction redirects the fetch before the instruction is
+    // decoded, so the redirected-from instruction may turn out not to be a
+    // branch at all. `ex_branch_valid` is false for it, so the direction
+    // comparison above never fires and nothing puts the fetch back — the core
+    // just carries on from wherever the BTB pointed. Correct it explicitly.
+    wire bogus_redirect = ex_predicted_taken && !ex_branch_valid && !ex_jump_valid;
+
+    assign mispredicted = bogus_redirect
+                       || (ex_branch_valid && (ex_branch_taken != ex_predicted_taken));
 
     always_comb begin
         if (ex_jump_valid)
             pc_next = ex_jump_target;
         else if (mispredicted)
-            pc_next = ex_branch_taken ? ex_branch_target : ex_branch_pc + 4;
+            // Only a resolved, taken branch has a target worth going to; a
+            // bogus redirect resumes after the instruction that caused it.
+            pc_next = (ex_branch_valid && ex_branch_taken)
+                    ? ex_branch_target : ex_branch_pc + 4;
         else if (predict_taken)
             pc_next = btb[bht_idx_fetch];
         else

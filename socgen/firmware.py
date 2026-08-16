@@ -55,11 +55,21 @@ def build() -> Assembler:
 
     # A fixed wait rather than polling STATUS.
     #
-    # Polling would be the right firmware and it does not work on this SoC yet:
-    # loads from a peripheral do not reach the register file, though loads from
-    # RAM do and writes to peripherals do. The defect is in the peripheral read
-    # path and is recorded in docs/soc.md with a reproducer, not papered over —
-    # this program simply does not depend on the part that is broken.
+    # Polling would be the right firmware and it still does not work here. The
+    # reason is now measured rather than guessed at, and it is not the
+    # peripheral read path: `dmem_rdata` carries 0x1 on exactly the cycle the
+    # core samples it. What goes wrong is in the core's predictor —
+    #
+    #     lw  x2, 0x24(x1)     <- fetched at 0x7c
+    #     beq x2, x0, -4       <- at 0x80
+    #
+    # a BTB entry for index 31 (PC[7:2] of 0x7c) holds 0x78 with a matching
+    # tag, so the *load* is predicted taken and the fetch is redirected
+    # backwards, re-running the CTRL write instead of reaching the branch. The
+    # loaded value never lands and the loop never ends.
+    #
+    # Recorded in docs/soc.md with a reproducer (`soc sim --only poll`), not
+    # papered over — this program simply does not depend on the broken part.
     #
     # The core needs 11 cycles for a block; 32 is comfortable.
     for _ in range(32):

@@ -251,24 +251,36 @@ class TestSimulations:
 
 @slow
 class TestKnownCoreDefects:
-    """A committed reproducer for a defect the SoC integration exposed.
+    """The reproducer for a defect the SoC integration exposed.
 
-    It is a test rather than a paragraph in a README because a bug without a
-    reproducer gets argued about, and because this will start failing the day
-    someone fixes the core — which is the notification you want.
+    It was committed failing, as an xfail, because a bug without a reproducer
+    gets argued about. It passes now — the core was fixed rather than the test
+    relaxed — and it stays as the regression guard.
     """
 
-    @pytest.mark.xfail(
-        reason="A loop body of a single instruction followed by a backward "
-               "branch runs once too many. Two or more instructions behave "
-               "correctly, which is why the core's own loop test never saw it. "
-               "See docs/soc.md.",
-        strict=True,
-    )
     def test_a_single_instruction_loop_body_runs_the_right_number_of_times(self):
         if missing_tools():
             pytest.skip(f"missing tools: {missing_tools()}")
         result = simulate("core", registry.DEFECT_BENCH, build_dir=BUILD_DIR, timeout=900)
+        if result.skipped:
+            pytest.skip(result.skipped)
+        assert result.ok, "\n".join(result.tail)
+
+    @pytest.mark.xfail(
+        reason="A status poll never terminates. Not the peripheral read path — "
+               "dmem_rdata carries the right value on the right cycle and a "
+               "straight-line load of the same register works. BTB index 31, "
+               "which is PC[7:2] of the *load* at 0x7c, holds 0x78 with a "
+               "matching tag, so the load is predicted taken and the fetch is "
+               "redirected backwards; the branch at 0x80 never reaches ID/EX. "
+               "Which resolution wrote that entry is not established. "
+               "See docs/soc.md.",
+        strict=True,
+    )
+    def test_a_status_poll_terminates(self):
+        if missing_tools():
+            pytest.skip(f"missing tools: {missing_tools()}")
+        result = simulate("core", registry.POLL_BENCH, build_dir=BUILD_DIR, timeout=900)
         if result.skipped:
             pytest.skip(result.skipped)
         assert result.ok, "\n".join(result.tail)

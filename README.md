@@ -100,28 +100,39 @@ never compared — until a test parsed both. They match, and both are proper
 permutations. That test would have caught a single-digit typo that no amount of
 reading would.
 
-**Two real defects in the core**, both invisible to its own testbench:
+**Three real defects in the core**, all invisible to its own testbench, two now
+fixed.
 
-1. A loop whose body is a *single* instruction followed by a backward branch
-   runs the body once too many. Two or more instructions behave correctly —
-   which is exactly why the core's own loop test (two-instruction body) never
-   saw it. There is a committed reproducer in `sim/tb_defects.sv`; it fails, on
-   purpose, and will start passing the day the core is fixed.
-2. Loads from a peripheral do not reach the register file, though loads from
-   RAM and writes to peripherals both work. The SoC firmware waits a fixed
-   number of cycles instead of polling a status register, with a comment saying
-   why.
+1. **A single-instruction loop body ran once too many** — fixed. A redirect has
+   to kill two fetched instructions, not one: the memory reads synchronously, so
+   at resolution there is one instruction in IF/ID and another still inside the
+   memory, fetched from the wrong path. The flush cleared only the first, and on
+   a single-instruction body the second one *is* the body. Two or more
+   instructions behaved correctly, which is exactly why the core's own loop test
+   never saw it.
+2. **The predictor redirected on instructions that were not branches** — fixed,
+   and worse than the first. The BHT and BTB were indexed by `PC[7:2]` with no
+   tag, and a prediction is made from the PC alone, before the instruction is
+   decoded. A NOP 256 bytes from a taken branch inherited its entry and jumped
+   the core into a loop it had already left — with nothing to correct it, since
+   `mispredicted` required `ex_branch_valid` and a NOP is not a branch. It now
+   has a tag and an explicit correction. Defect 1 had been *masking* this one:
+   the leaked wrong-path instruction re-executed the branch and weakened the BHT
+   entry just enough to hide it. Fixing one exposed the other.
+3. **A status poll never terminates** — not fixed, and much more sharply
+   characterised than it was. It is *not* the peripheral read path, which is
+   what this used to say: `dmem_rdata` carries the right value on the right
+   cycle and a straight-line load of the same register lands. A BTB entry
+   indexed by the *load's* PC predicts taken and redirects the fetch backwards,
+   so the branch after it is never reached. Which resolution wrote that entry is
+   not established, and guessing at a predictor fix is how you get a core that
+   passes its tests and is wrong. Reproducer in `sim/tb_poll.sv`, carried as a
+   strict `xfail`; the firmware waits a fixed 32 cycles with a comment pointing
+   at it.
 
-**One fix applied.** The branch-misprediction check compared the outcome
-against the BHT's contents *at resolution time* rather than against the
-prediction actually made when the branch was fetched. Those differ whenever the
-same branch is in flight twice — a tight loop — because an earlier iteration
-updates the entry while a later one is still in the pipeline. The prediction now
-travels down the pipeline with its instruction. The core's twenty tests pass
-unchanged.
-
-Neither remaining defect is papered over: they are documented, reproduced, and
-worked around visibly.
+Both fixes were found by *committing the reproducers failing*. That is the point
+of them: a defect in prose gets argued about, while one with a reproducer is a
+fixed target — and the day someone fixes it, the suite says so. It did.
 
 ## Using one module on its own
 

@@ -30,6 +30,18 @@ def _write_defect_program(cwd: Path) -> None:
     asm.addi("x1", "x1", 1)
     asm.bne("x1", "x2", "loop")
     asm.sw("x1", "x3", 0)
+
+    # Defect 2: a load from a peripheral reaching the register file.
+    # AES 0x24 is the `done` status bit, which reads 0 out of reset. Reading a
+    # known-zero register is not much of a test, so the value is loaded, had 7
+    # added to it, and stored: the store proves the load's destination register
+    # took part in the arithmetic rather than being left at whatever it held.
+    asm.li("x4", memmap.region("aes").base + 0x24)
+    asm.li("x5", 0xDEAD)              # poison, so an untouched x5 is visible
+    asm.lw("x5", "x4", 0)             # x5 <- AES done (0)
+    asm.addi("x5", "x5", 7)
+    asm.sw("x5", "x3", 4)             # ram[1] should be 7, not 0xDEAD + 7
+
     asm.label("end")
     asm.beq("x0", "x0", "end")
     asm.write_hex(cwd / "program.hex")
@@ -190,6 +202,51 @@ SOC_BENCH = Bench(
     include_dirs=("rtl", "../../rtl", "../uart-spi/rtl", "../aes/rtl"),
     expect="SOC SIMULATION PASSED",
     prepare=_write_firmware,
+)
+
+
+def _write_poll_program(cwd: Path) -> None:
+    """Start AES, poll STATUS.done, then store a marker.
+
+    Reaching the store is the whole test. See sim/tb_poll.sv.
+    """
+    from .asm import Assembler
+    from . import memmap
+
+    aes = memmap.region("aes")
+    asm = Assembler()
+    asm.li("x1", aes.base)
+    asm.li("x3", memmap.region("ram").base)
+
+    asm.li("x2", 1)
+    asm.sw("x2", "x1", 0x20)                  # CTRL: start
+    asm.label("wait")
+    asm.lw("x2", "x1", 0x24)                  # STATUS.done
+    asm.beq("x2", "x0", "wait")
+
+    asm.li("x4", 0xA5A50001)
+    asm.sw("x4", "x3", 0)
+    asm.label("end")
+    asm.beq("x0", "x0", "end")
+    asm.write_hex(cwd / "program.hex")
+
+
+POLL_BENCH = Bench(
+    name="poll",
+    language=SYSTEMVERILOG,
+    top="tb_poll",
+    sources=(
+        "../../sim/tb_poll.sv", "../../rtl/soc_top.sv", "../../rtl/aes_regs.sv",
+        *_CORE_RTL,
+        "../uart-spi/rtl/uart_rx.sv", "../uart-spi/rtl/uart_tx.sv",
+        "../uart-spi/rtl/sync_fifo.sv", "../uart-spi/rtl/uart_core.sv",
+        "../aes/rtl/aes_sbox.v", "../aes/rtl/aes_mixcol.v", "../aes/rtl/aes_round.v",
+        "../aes/rtl/aes_final_round.v", "../aes/rtl/aes_key_expand.v",
+        "../aes/rtl/aes128_core.v",
+    ),
+    include_dirs=("rtl", "../../rtl", "../uart-spi/rtl", "../aes/rtl"),
+    expect="POLL FIXED",
+    prepare=_write_poll_program,
 )
 
 

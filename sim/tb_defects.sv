@@ -1,18 +1,20 @@
-// Reproducers for two defects the SoC integration exposed.
+// Regression guards for defects the SoC integration exposed.
 //
-// These are committed, and they fail. That is the point: a defect described in
-// prose gets argued about and forgotten, while one with a reproducer is a
-// fixed target — and the day someone fixes it, this file says so.
+// Both checks below pass. They were committed failing, which is the point: a
+// defect described in prose gets argued about and forgotten, while one with a
+// reproducer is a fixed target — and the day someone fixes it, this file says
+// so. It said so.
 //
 //   1. A loop whose body is a single instruction, followed by a backward
-//      branch, runs the body once too many. Two or more instructions in the
-//      body behave correctly. The core's own loop test has a two-instruction
-//      body, which is why it never saw this.
+//      branch, ran the body once too many. Two or more instructions in the
+//      body behaved correctly, which is why the core's own loop test never saw
+//      it. Fixed: a redirect now invalidates the fetch still inside the
+//      instruction memory, not just the one in IF/ID. See docs/soc.md.
 //
-//   2. A load from a peripheral does not reach the register file. Loads from
-//      RAM work and writes to peripherals work; only the peripheral read path
-//      is affected. The SoC firmware waits a fixed number of cycles rather
-//      than polling a status register because of it.
+//   2. A load from a peripheral reaching the register file. This always
+//      worked; it is here to bound what remains. The poll loop in
+//      sim/tb_poll.sv uses the same load and still fails, so the defect is not
+//      in the peripheral read path — which is what docs/soc.md used to claim.
 //
 // The program is assembled by socgen/firmware.py's sibling in the test harness
 // and loaded as program.hex, exactly as the SoC bench is.
@@ -45,6 +47,7 @@ module tb_defects;
     endtask
 
     logic [31:0] counter;
+    logic [31:0] peripheral;
 
     initial begin
         $display("");
@@ -63,6 +66,19 @@ module tb_defects;
               counter == 32'd5);
         if (counter != 32'd5)
             $display("    counter = %0d, expected 5", counter);
+
+        // A straight-line load from a peripheral, plus 7. x5 is poisoned with
+        // 0xDEAD first, so a load that never lands leaves 0xDEB4 here.
+        //
+        // This one works, and it is here to bound the remaining defect: the
+        // peripheral read path is fine. What fails is the same load inside a
+        // poll loop -- see sim/tb_poll.sv.
+        peripheral = {dut.u_ram.mem[7], dut.u_ram.mem[6],
+                      dut.u_ram.mem[5], dut.u_ram.mem[4]};
+        check("a load from a peripheral reaches the register file",
+              peripheral == 32'd7);
+        if (peripheral != 32'd7)
+            $display("    ram[1] = 0x%08h, expected 7", peripheral);
 
         $display("");
         $display("  ════════════════════════════════════");

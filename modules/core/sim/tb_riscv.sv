@@ -268,10 +268,15 @@ module tb_riscv;
         u_imem.mem[0] = enc_jal(5'd1, 21'd8);               // JAL x1, +8
         u_imem.mem[1] = enc_i(OI, 5'd5, 3'b000, 5'd0, 12'd0); // should be skipped
         u_imem.mem[2] = enc_i(OI, 5'd2, 3'b000, 5'd0, 12'd77); // x2 = 77  (jumped to)
-        // JALR x3, x1, 4  → jump to x1+4 = 0+4 = 4+4=8... actually x1=4, 4+4=8
-        //  store: x3 = PC+4
-        // For simplicity: JALR x0, x1, 0  (jump to x1, discard return)
-        u_imem.mem[3] = enc_i(7'b110_0111, 5'd3, 3'b000, 5'd1, 12'd4); // JALR x3, x1, 4 → jump to 8
+        // JALR x3, x1, 20 → target = (x1 + 20) & ~1 = (4 + 20) = 24 = 0x18,
+        // which is mem[6] below. x3 gets the return address, PC + 4 = 0x10.
+        //
+        // This used to be `JALR x3, x1, 4`, whose target is (4 + 4) = 8 — back
+        // to mem[2], an infinite loop that never reaches mem[6] at all. It
+        // "passed" only because the core let the instruction behind a redirect
+        // execute anyway, so mem[6] ran as wrong-path work. The offset is now
+        // the one the test always meant.
+        u_imem.mem[3] = enc_i(7'b110_0111, 5'd3, 3'b000, 5'd1, 12'd20);
         u_imem.mem[4] = enc_i(OI, 5'd6, 3'b000, 5'd0, 12'd0);   // skip
         u_imem.mem[5] = enc_i(OI, 5'd6, 3'b000, 5'd0, 12'd0);   // skip
         u_imem.mem[6] = enc_i(OI, 5'd4, 3'b000, 5'd0, 12'd88);  // x4 = 88 (JALR lands here)
@@ -283,6 +288,7 @@ module tb_riscv;
         check("JAL: x1 = return addr = 4",  rf(1), 32'd4);
         check("JAL: x2 = 77 (target exec)", rf(2), 32'd77);
         check("JALR: x4 = 88 (target exec)",rf(4), 32'd88);
+        check("JALR: x3 = return addr = 0x10", rf(3), 32'h10);
     endtask
 
     // =========================================================
