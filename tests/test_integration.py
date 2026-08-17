@@ -251,11 +251,11 @@ class TestSimulations:
 
 @slow
 class TestKnownCoreDefects:
-    """The reproducer for a defect the SoC integration exposed.
+    """Reproducers for the defects the SoC integration exposed.
 
-    It was committed failing, as an xfail, because a bug without a reproducer
-    gets argued about. It passes now — the core was fixed rather than the test
-    relaxed — and it stays as the regression guard.
+    Each was committed failing, as a strict xfail, because a bug without a
+    reproducer gets argued about. All of them pass now — the core was fixed
+    rather than the tests relaxed — and they stay as the regression guards.
     """
 
     def test_a_single_instruction_loop_body_runs_the_right_number_of_times(self):
@@ -266,21 +266,25 @@ class TestKnownCoreDefects:
             pytest.skip(result.skipped)
         assert result.ok, "\n".join(result.tail)
 
-    @pytest.mark.xfail(
-        reason="A status poll never terminates. Not the peripheral read path — "
-               "dmem_rdata carries the right value on the right cycle and a "
-               "straight-line load of the same register works. BTB index 31, "
-               "which is PC[7:2] of the *load* at 0x7c, holds 0x78 with a "
-               "matching tag, so the load is predicted taken and the fetch is "
-               "redirected backwards; the branch at 0x80 never reaches ID/EX. "
-               "Which resolution wrote that entry is not established. "
-               "See docs/soc.md.",
-        strict=True,
-    )
     def test_a_status_poll_terminates(self):
+        """The one that took three goes. A poll is a load followed by a branch
+        on the loaded value, which is the shortest program that needs the fetch
+        pipeline, the load path and the predictor all to be right at once."""
         if missing_tools():
             pytest.skip(f"missing tools: {missing_tools()}")
         result = simulate("core", registry.POLL_BENCH, build_dir=BUILD_DIR, timeout=900)
+        if result.skipped:
+            pytest.skip(result.skipped)
+        assert result.ok, "\n".join(result.tail)
+
+    def test_a_load_returns_the_word_at_its_own_address(self):
+        """A load preceded by an access to a *different* address. The core's
+        own load test uses address 0 preceded by NOPs, whose dmem_addr is also
+        0, so a load that sampled the bus a cycle early still read the right
+        word."""
+        if missing_tools():
+            pytest.skip(f"missing tools: {missing_tools()}")
+        result = simulate("core", registry.LOAD_BENCH, build_dir=BUILD_DIR, timeout=900)
         if result.skipped:
             pytest.skip(result.skipped)
         assert result.ok, "\n".join(result.tail)

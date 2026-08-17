@@ -205,6 +205,35 @@ SOC_BENCH = Bench(
 )
 
 
+def _write_load_program(cwd: Path) -> None:
+    """Two loads from different addresses, back to back.
+
+    The core's own load test loads from address 0 preceded by NOPs, whose
+    dmem_addr is also 0 — so a load that samples the bus one cycle early still
+    reads the right word. This one makes the previous address different.
+    """
+    from .asm import Assembler
+    from . import memmap
+
+    ram = memmap.region("ram").base
+    asm = Assembler()
+    asm.li("x1", ram)
+    asm.li("x2", 0xAAAA0000)
+    asm.sw("x2", "x1", 0)                     # ram[0] = AAAA0000
+    asm.li("x3", 0xBBBB0000)
+    asm.sw("x3", "x1", 16)                    # ram[4] = BBBB0000
+    asm.nop(); asm.nop(); asm.nop()
+
+    asm.lw("x4", "x1", 16)                    # x4 = BBBB0000
+    asm.nop(); asm.nop(); asm.nop()
+    asm.lw("x5", "x1", 0)                     # x5 = AAAA0000
+    asm.nop(); asm.nop(); asm.nop()
+    asm.sw("x5", "x1", 32)                    # ram[8] should be AAAA0000
+    asm.label("end")
+    asm.beq("x0", "x0", "end")
+    asm.write_hex(cwd / "program.hex")
+
+
 def _write_poll_program(cwd: Path) -> None:
     """Start AES, poll STATUS.done, then store a marker.
 
@@ -229,6 +258,25 @@ def _write_poll_program(cwd: Path) -> None:
     asm.label("end")
     asm.beq("x0", "x0", "end")
     asm.write_hex(cwd / "program.hex")
+
+
+LOAD_BENCH = Bench(
+    name="load",
+    language=SYSTEMVERILOG,
+    top="tb_load",
+    sources=(
+        "../../sim/tb_load.sv", "../../rtl/soc_top.sv", "../../rtl/aes_regs.sv",
+        *_CORE_RTL,
+        "../uart-spi/rtl/uart_rx.sv", "../uart-spi/rtl/uart_tx.sv",
+        "../uart-spi/rtl/sync_fifo.sv", "../uart-spi/rtl/uart_core.sv",
+        "../aes/rtl/aes_sbox.v", "../aes/rtl/aes_mixcol.v", "../aes/rtl/aes_round.v",
+        "../aes/rtl/aes_final_round.v", "../aes/rtl/aes_key_expand.v",
+        "../aes/rtl/aes128_core.v",
+    ),
+    include_dirs=("rtl", "../../rtl", "../uart-spi/rtl", "../aes/rtl"),
+    expect="LOADS CORRECT",
+    prepare=_write_load_program,
+)
 
 
 POLL_BENCH = Bench(

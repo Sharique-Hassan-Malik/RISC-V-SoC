@@ -100,39 +100,45 @@ never compared — until a test parsed both. They match, and both are proper
 permutations. That test would have caught a single-digit typo that no amount of
 reading would.
 
-**Three real defects in the core**, all invisible to its own testbench, two now
-fixed.
+**Five real defects in the core**, all invisible to its own twenty-one-test
+bench, all now fixed with committed reproducers.
 
-1. **A single-instruction loop body ran once too many** — fixed. A redirect has
-   to kill two fetched instructions, not one: the memory reads synchronously, so
-   at resolution there is one instruction in IF/ID and another still inside the
-   memory, fetched from the wrong path. The flush cleared only the first, and on
-   a single-instruction body the second one *is* the body. Two or more
-   instructions behaved correctly, which is exactly why the core's own loop test
-   never saw it.
-2. **The predictor redirected on instructions that were not branches** — fixed,
-   and worse than the first. The BHT and BTB were indexed by `PC[7:2]` with no
-   tag, and a prediction is made from the PC alone, before the instruction is
-   decoded. A NOP 256 bytes from a taken branch inherited its entry and jumped
-   the core into a loop it had already left — with nothing to correct it, since
-   `mispredicted` required `ex_branch_valid` and a NOP is not a branch. It now
-   has a tag and an explicit correction. Defect 1 had been *masking* this one:
-   the leaked wrong-path instruction re-executed the branch and weakened the BHT
-   entry just enough to hide it. Fixing one exposed the other.
-3. **A status poll never terminates** — not fixed, and much more sharply
-   characterised than it was. It is *not* the peripheral read path, which is
-   what this used to say: `dmem_rdata` carries the right value on the right
-   cycle and a straight-line load of the same register lands. A BTB entry
-   indexed by the *load's* PC predicts taken and redirects the fetch backwards,
-   so the branch after it is never reached. Which resolution wrote that entry is
-   not established, and guessing at a predictor fix is how you get a core that
-   passes its tests and is wrong. Reproducer in `sim/tb_poll.sv`, carried as a
-   strict `xfail`; the firmware waits a fixed 32 cycles with a comment pointing
-   at it.
+1. **A single-instruction loop body ran once too many.** A redirect has to kill
+   two fetched instructions, not one: the memory reads synchronously, so at
+   resolution there is one instruction in IF/ID and another still inside the
+   memory, fetched from the wrong path. The flush cleared only the first — and
+   on a single-instruction body the second one *is* the body.
+2. **The predictor redirected on instructions that were not branches.** The BHT
+   and BTB were indexed by `PC[7:2]` with no tag, and a prediction is made from
+   the PC alone, before the instruction is decoded. A NOP 256 bytes from a
+   taken branch inherited its entry and jumped the core into a loop it had
+   already left, with nothing to correct it since `mispredicted` required
+   `ex_branch_valid`. Defect 1 had been *masking* this one.
+3. **Every load returned the previous access's word.** The data memory is
+   synchronous, so the word for the address issued in MEM arrives in WB — but
+   MEM/WB registered the bus in MEM. It hid because the obvious test cannot see
+   it: the core's own load test uses address 0 preceded by NOPs, whose
+   `dmem_addr` is also 0, so the stale word is the right word by accident.
+4. **A stall desynchronised the fetch pair.** A stall freezes `pc_reg`,
+   `pc_fetch` and IF/ID, but cannot freeze `imem_data` — the memory keeps
+   returning whatever `imem_addr` points at, and that was `pc_reg`, one ahead
+   of `pc_fetch`. IF/ID then latched a PC paired with the wrong instruction, and
+   a branch arriving under its predecessor's PC wrote a BTB entry for an
+   address that is not a branch.
+5. **A redirect was discarded by a stall.** `pc_reg` updated only when
+   `!stall_if`, so a correction computed during a stall was thrown away.
 
-Both fixes were found by *committing the reproducers failing*. That is the point
-of them: a defect in prose gets argued about, while one with a reproducer is a
-fixed target — and the day someone fixes it, the suite says so. It did.
+3, 4 and 5 together are why a status poll never terminated — for a long time
+recorded, wrongly, as "loads from a peripheral do not reach the register file".
+A poll is a load followed by a branch on the loaded value: the shortest program
+that needs the fetch pipeline, the load path and the predictor all correct at
+once. The firmware polls `STATUS.done` now rather than waiting a fixed 32
+cycles.
+
+Every one of these was found by *committing the reproducer failing*. That is
+the point of them: a defect in prose gets argued about, while one with a
+reproducer is a fixed target — and the day someone fixes it, the suite says so.
+It did, five times.
 
 ## Using one module on its own
 

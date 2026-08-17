@@ -103,6 +103,38 @@ package rv32i_pkg;
         funct3:     3'b000
     };
 
+    // ---- Load alignment and extension ------------------------------------
+    //
+    // A pure function of the returned word, the funct3 and the two low address
+    // bits. It lives here rather than in mem_stage because the data memory is
+    // synchronous: the word for the address issued in MEM does not arrive
+    // until WB, so the formatting has to happen a stage later than the access.
+    function automatic logic [31:0] load_extend(
+        input logic [2:0]  funct3,
+        input logic [1:0]  offset,
+        input logic [31:0] word
+    );
+        case (funct3)
+            F3_LB: case (offset)
+                2'b00: load_extend = {{24{word[ 7]}}, word[ 7: 0]};
+                2'b01: load_extend = {{24{word[15]}}, word[15: 8]};
+                2'b10: load_extend = {{24{word[23]}}, word[23:16]};
+                2'b11: load_extend = {{24{word[31]}}, word[31:24]};
+            endcase
+            F3_LBU: case (offset)
+                2'b00: load_extend = {24'd0, word[ 7: 0]};
+                2'b01: load_extend = {24'd0, word[15: 8]};
+                2'b10: load_extend = {24'd0, word[23:16]};
+                2'b11: load_extend = {24'd0, word[31:24]};
+            endcase
+            F3_LH:  load_extend = offset[1] ? {{16{word[31]}}, word[31:16]}
+                                            : {{16{word[15]}}, word[15: 0]};
+            F3_LHU: load_extend = offset[1] ? {16'd0, word[31:16]}
+                                            : {16'd0, word[15: 0]};
+            default: load_extend = word;      // F3_LW
+        endcase
+    endfunction
+
 endpackage
 
 `endif

@@ -88,39 +88,62 @@ that created it; and a `bogus_redirect` term, so a prediction that redirected
 the fetch for something that turns out not to be a taken branch is corrected to
 `pc + 4`. The tag makes it rare, the correction makes it impossible.
 
-### 3. A status poll never terminates — NOT FIXED
+### 3. Every load returned the previous access's word — FIXED
 
-The remaining one, and it is characterised much more sharply than it was.
+Recorded twice before as "loads from a peripheral do not reach the register
+file". Wrong twice: it was not the peripheral read path, and it was not
+peripheral-specific.
 
-**What is not wrong**, measured on the bus:
+The data memory is synchronous. The address issued in MEM returns its word on
+`dmem_rdata` in the *next* cycle, when the load has already moved to WB. But
+`mem_stage` read the bus in MEM and `MEM/WB` registered it there — so every
+load committed the word for whatever address the bus carried the cycle before.
 
-* the AES block completes and sets `done_q` — the ciphertext is correct;
-* `dmem_rdata` carries `0x00000001` on exactly the cycle the core samples it;
-* a straight-line load of the same register lands in the register file, which
-  `sim/tb_defects.sv` now checks explicitly.
-
-So it is not the peripheral read path, which is what this file used to say.
-
-**What is wrong.** The poll is
+It hid because the obvious test cannot see it. The core's own load test stores
+42 at address 0 and loads it back, preceded by NOPs — and a NOP's `dmem_addr`
+is its ALU result, which is also 0. The stale word is the right word, by
+accident. Only a load whose *previous* bus address differs shows it:
 
 ```
-0x7c   lw  x2, 0x24(x1)
-0x80   beq x2, x0, -4
+sw x2, 0(x1)      ram[0] = AAAA0000
+sw x3, 16(x1)     ram[4] = BBBB0000
+nop x3
+lw x4, 16(x1)     ← returned AAAA0000
 ```
 
-and BTB index 31 — `PC[7:2]` of `0x7c`, the *load* — holds `0x78` with a
-matching tag. The load is therefore predicted taken, the fetch is redirected
-backwards to the `CTRL` write, and the branch at `0x80` never reaches ID/EX at
-all. AES is restarted every iteration and the loop never ends.
+The load's data is now formatted in WB from the live bus, using the address and
+`funct3` carried in MEM/WB, via `rv32i_pkg::load_extend`. `mem_stage` issues
+the access and no longer reads it.
 
-Which branch resolution wrote that entry is not established. No instruction at
-`0x7c` is a branch, and `ex_branch_valid` is low for the load, so the write
-should not have happened. Since the tag matches, it was written by something
-with `ex_branch_pc[31:8] == 0` and `PC[7:2] == 31`.
+Reproducer: `sim/tb_load.sv`, `soc sim --only load`.
 
-Reproducer: `sim/tb_poll.sv`, `soc sim --only poll`, and a strict `xfail` in
-`tests/test_integration.py`. `socgen/firmware.py` waits a fixed 32 cycles
-instead of polling, with a comment pointing here.
+### 4. A stall desynchronised the fetch pair — FIXED
+
+Fetch is two deep: `pc_reg` is the address going out, `pc_fetch`/`imem_data` is
+the instruction coming back, IF/ID is the one being decoded. A stall freezes
+`pc_reg`, `pc_fetch` and IF/ID — but it cannot freeze `imem_data`, which lives
+inside the memory and keeps returning whatever `imem_addr` points at. And
+`imem_addr` was `pc_reg`, one *ahead* of `pc_fetch`.
+
+So after one stall cycle the memory handed back the instruction for `pc_reg`
+while `pc_fetch` still named the older address, and IF/ID latched a PC paired
+with the wrong instruction. A branch arriving under its predecessor's PC then
+resolved under that PC: it wrote the BTB entry for an address that is not a
+branch, and the fetch was redirected backwards there forever after.
+
+`imem_addr` is now `stall_id ? pc_fetch : pc_if`, so the address presented is
+always the one the fetch register names.
+
+### 5. A redirect was discarded by a stall — FIXED
+
+`pc_reg` updated only when `!stall_if`, so a redirect computed during a stall
+was thrown away. That is fatal for a poll: `lw` then a branch on the loaded
+value asserts the load-use stall on exactly the cycle a prediction made for the
+load has to be undone. The consumer the stall protects is being flushed anyway,
+so a redirect now overrides it.
+
+Together, 3, 4 and 5 are why a status poll never ended. `socgen/firmware.py`
+polls `STATUS.done` now instead of waiting a fixed 32 cycles.
 
 ## An earlier fix, for context
 

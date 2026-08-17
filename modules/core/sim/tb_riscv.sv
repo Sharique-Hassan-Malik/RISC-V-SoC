@@ -140,12 +140,25 @@ module tb_riscv;
         for (int i = from; i < to; i++) u_imem.mem[i] = NOP32;
     endtask
 
+    // Fill the whole instruction memory with NOPs.
+    //
+    // `imem` runs `$readmemh("program.hex")` in its initial block, and the SoC
+    // and defect benches write that file into this directory. Without this, a
+    // test that runs off the end of its own pad executes AES key material left
+    // there by whichever bench ran last — and fails with values like
+    // 0x885a308d, which is a slice of the FIPS-197 plaintext and looks like a
+    // core bug. Each test starts from a known memory instead.
+    task clear_imem;
+        for (int i = 0; i < 1024; i++) u_imem.mem[i] = NOP32;
+    endtask
+
     // =========================================================
     // Test 1: Basic ALU operations
     // =========================================================
     task test_alu;
         $display("\n[Test 1] Basic ALU operations");
         pc = 0;
+        clear_imem;
 
         // ADDI x1, x0, 10    → x1 = 10
         u_imem.mem[pc++] = enc_i(OI, 5'd1, 3'b000, 5'd0, 12'd10);
@@ -193,6 +206,7 @@ module tb_riscv;
     task test_forwarding;
         $display("\n[Test 2] Data forwarding");
         pc = 0;
+        clear_imem;
 
         // EX→EX forward: result of ADDI used by next ADD
         u_imem.mem[pc++] = enc_i(OI, 5'd1, 3'b000, 5'd0, 12'd7);  // x1 = 7
@@ -216,6 +230,7 @@ module tb_riscv;
     task test_load_use;
         $display("\n[Test 3] Load-use hazard");
         pc = 0;
+        clear_imem;
         // Store 42 at dmem[0]
         u_imem.mem[pc++] = enc_i(OI, 5'd1, 3'b000, 5'd0, 12'd42);   // x1 = 42
         u_imem.mem[pc++] = enc_s(5'd0, 5'd1, 3'b010, 12'd0);         // SW x1, 0(x0)
@@ -237,6 +252,7 @@ module tb_riscv;
     task test_branch;
         $display("\n[Test 4] Branch");
         pc = 0;
+        clear_imem;
         // BEQ x0, x0, +8  (taken — skip next instruction)
         // If branch taken: x1 = 99, else x1 = 0
         u_imem.mem[pc++] = enc_b(5'd0, 5'd0, 3'b000, 13'd8);        // BEQ x0,x0, +8
@@ -264,6 +280,7 @@ module tb_riscv;
     task test_jal_jalr;
         $display("\n[Test 5] JAL / JALR");
         pc = 0;
+        clear_imem;
         // JAL x1, +8   → x1 = PC+4 (= 4), jump to PC+8 (= 8)
         u_imem.mem[0] = enc_jal(5'd1, 21'd8);               // JAL x1, +8
         u_imem.mem[1] = enc_i(OI, 5'd5, 3'b000, 5'd0, 12'd0); // should be skipped
@@ -298,6 +315,7 @@ module tb_riscv;
         int saved_branches, saved_mispredicts;
         $display("\n[Test 6] Loop (64 iterations, branch predictor)");
         pc = 0;
+        clear_imem;
 
         // Loop:
         //   x1 = 64

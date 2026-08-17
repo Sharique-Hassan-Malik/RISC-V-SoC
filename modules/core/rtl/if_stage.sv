@@ -50,11 +50,11 @@ module if_stage (
 
     // The prediction made for the instruction being fetched this cycle. The
     // core pipelines it alongside the instruction.
-    output logic        predict_taken_if,
-
-    // Instruction memory interface
-    output logic [31:0] imem_addr,
-    input  logic [31:0] imem_data
+    //
+    // There is deliberately no imem_addr here. riscv_core drives it, because
+    // during a stall it has to be the address the *fetch register* names, and
+    // that register sits up there beside the IF/ID pipeline.
+    output logic        predict_taken_if
 );
 
     // ---- 2-bit Saturating Counter BHT (Branch History Table) -------------
@@ -94,6 +94,7 @@ module if_stage (
     // ---- PC register -----------------------------------------------------
     logic [31:0] pc_next;
     logic [31:0] pc_reg;
+    logic        redirect;
 
     always_ff @(posedge clk) begin
         if (rst) begin
@@ -116,7 +117,20 @@ module if_stage (
                                           ? 2'b00 : bht[bht_idx_update] - 1;
             end
 
-            if (!stall_if)
+            // A redirect outranks a stall.
+            //
+            // The load-use stall exists to give the consumer in ID one more
+            // cycle for its operand. On a redirect that consumer is being
+            // flushed anyway, so holding the PC for it does nothing except
+            // discard the correction — `pc_next` is computed and thrown away.
+            //
+            // That is fatal when the redirect came from the load itself. A
+            // status poll is `lw` then a branch on the loaded value, so the
+            // load-use stall is asserted on exactly the cycle a prediction
+            // made for the load has to be undone. The correction never
+            // landed, the fetch stayed on the predicted path, and the poll
+            // never ended.
+            if (!stall_if || redirect)
                 pc_reg <= pc_next;
         end
     end
@@ -146,6 +160,10 @@ module if_stage (
     assign mispredicted = bogus_redirect
                        || (ex_branch_valid && (ex_branch_taken != ex_predicted_taken));
 
+    //: Anything that makes the fetched path wrong. Drives both flushes and,
+    //: crucially, overrides the stall on the PC register above.
+    assign redirect = ex_jump_valid || mispredicted;
+
     always_comb begin
         if (ex_jump_valid)
             pc_next = ex_jump_target;
@@ -162,12 +180,11 @@ module if_stage (
 
     // ---- Flush signals ---------------------------------------------------
     // Flush whenever the fetched path was wrong.
-    assign flush_if_id = ex_jump_valid || mispredicted;
-    assign flush_id_ex = ex_jump_valid || mispredicted;
+    assign flush_if_id = redirect;
+    assign flush_id_ex = redirect;
 
     // ---- Outputs ---------------------------------------------------------
     assign pc_if           = pc_reg;
-    assign imem_addr       = pc_reg;
     assign predict_taken_if = predict_taken;
 
 endmodule

@@ -53,27 +53,19 @@ def build() -> Assembler:
     asm.li("x2", 1)
     asm.sw("x2", "x1", 0x20)                 # CTRL: start
 
-    # A fixed wait rather than polling STATUS.
+    # Poll STATUS.done.
     #
-    # Polling would be the right firmware and it still does not work here. The
-    # reason is now measured rather than guessed at, and it is not the
-    # peripheral read path: `dmem_rdata` carries 0x1 on exactly the cycle the
-    # core samples it. What goes wrong is in the core's predictor —
-    #
-    #     lw  x2, 0x24(x1)     <- fetched at 0x7c
-    #     beq x2, x0, -4       <- at 0x80
-    #
-    # a BTB entry for index 31 (PC[7:2] of 0x7c) holds 0x78 with a matching
-    # tag, so the *load* is predicted taken and the fetch is redirected
-    # backwards, re-running the CTRL write instead of reaching the branch. The
-    # loaded value never lands and the loop never ends.
-    #
-    # Recorded in docs/soc.md with a reproducer (`soc sim --only poll`), not
-    # papered over — this program simply does not depend on the broken part.
-    #
-    # The core needs 11 cycles for a block; 32 is comfortable.
-    for _ in range(32):
-        asm.nop()
+    # This was 32 NOPs for a long time, with a comment explaining that polling
+    # did not work on this SoC because "loads from a peripheral do not reach
+    # the register file". That diagnosis was wrong twice over. It was not the
+    # peripheral read path, and it was not peripheral-specific: the core
+    # sampled `dmem_rdata` at the end of MEM, one cycle before a synchronous
+    # memory returns it, so *every* load got the word for whatever address the
+    # bus carried before it. RAM loads looked fine only when that happened to
+    # be the same address. See docs/soc.md.
+    asm.label("wait")
+    asm.lw("x2", "x1", 0x24)                 # STATUS.done
+    asm.beq("x2", "x0", "wait")
 
     # A byte out of the UART, to show the other window decodes too.
     asm.li("x6", uart.base)

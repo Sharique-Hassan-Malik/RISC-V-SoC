@@ -36,10 +36,8 @@ module mem_stage (
     output logic [31:0] dmem_wdata,
     output logic [3:0]  dmem_be,      // byte enables
     output logic        dmem_we,
-    input  logic [31:0] dmem_rdata,
 
     // Outputs to MEM/WB pipeline register
-    output logic [31:0] mem_read_data,   // load-extended value
     output logic [31:0] alu_result_out,
     output ctrl_t       ctrl_out,
     output logic [4:0]  rd_out
@@ -74,42 +72,17 @@ module mem_stage (
         end
     end
 
-    // ---- Load sign/zero extension ----------------------------------------
-    always_comb begin
-        mem_read_data = 32'd0;
-        if (ctrl.mem_read) begin
-            case (ctrl.funct3)
-                F3_LB: begin
-                    case (alu_result[1:0])
-                        2'b00: mem_read_data = {{24{dmem_rdata[ 7]}}, dmem_rdata[ 7: 0]};
-                        2'b01: mem_read_data = {{24{dmem_rdata[15]}}, dmem_rdata[15: 8]};
-                        2'b10: mem_read_data = {{24{dmem_rdata[23]}}, dmem_rdata[23:16]};
-                        2'b11: mem_read_data = {{24{dmem_rdata[31]}}, dmem_rdata[31:24]};
-                    endcase
-                end
-                F3_LBU: begin
-                    case (alu_result[1:0])
-                        2'b00: mem_read_data = {24'd0, dmem_rdata[ 7: 0]};
-                        2'b01: mem_read_data = {24'd0, dmem_rdata[15: 8]};
-                        2'b10: mem_read_data = {24'd0, dmem_rdata[23:16]};
-                        2'b11: mem_read_data = {24'd0, dmem_rdata[31:24]};
-                    endcase
-                end
-                F3_LH: begin
-                    mem_read_data = alu_result[1]
-                        ? {{16{dmem_rdata[31]}}, dmem_rdata[31:16]}
-                        : {{16{dmem_rdata[15]}}, dmem_rdata[15: 0]};
-                end
-                F3_LHU: begin
-                    mem_read_data = alu_result[1]
-                        ? {16'd0, dmem_rdata[31:16]}
-                        : {16'd0, dmem_rdata[15: 0]};
-                end
-                F3_LW: mem_read_data = dmem_rdata;
-                default: mem_read_data = dmem_rdata;
-            endcase
-        end
-    end
+    // The load's data is NOT read here.
+    //
+    // The data memory is synchronous: the address issued this cycle returns
+    // its word on `dmem_rdata` in the *next* cycle, when the load has already
+    // moved to WB. Reading it here samples whatever the previous access left
+    // on the bus — which is why a load preceded by an access to a different
+    // address returned the wrong word, and why the core's own load test never
+    // saw it: that test loads from address 0 preceded by NOPs, whose
+    // dmem_addr is also 0, so the stale word is the right one by accident.
+    //
+    // riscv_core formats it in WB with rv32i_pkg::load_extend.
 
     assign alu_result_out = alu_result;
     assign ctrl_out       = ctrl;

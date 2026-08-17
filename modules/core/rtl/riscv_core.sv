@@ -67,7 +67,6 @@ module riscv_core (
     // MEM/WB
     ctrl_t       memwb_ctrl;
     logic [31:0] memwb_alu_result;
-    logic [31:0] memwb_mem_data;
     logic [4:0]  memwb_rd;
 
     // ========== Hazard / forwarding signals ================================
@@ -106,10 +105,29 @@ module riscv_core (
         .flush_if_id(flush_if_id_bp),
         .flush_id_ex(flush_id_ex_bp),
         .pc_if(pc_if),
-        .predict_taken_if(predict_taken_if),
-        .imem_addr(imem_addr),
-        .imem_data(imem_data)
+        .predict_taken_if(predict_taken_if)
     );
+
+    // The instruction memory address.
+    //
+    // Normally the PC being fetched. During a stall it must be `pc_fetch`
+    // instead, and that is not a refinement — it is the difference between a
+    // consistent fetch pipeline and a corrupt one.
+    //
+    // Fetch is two deep: pc_reg is the address going out, pc_fetch/imem_data
+    // is the instruction coming back, IF/ID is the one being decoded. A stall
+    // freezes pc_reg, pc_fetch and IF/ID. It cannot freeze imem_data, which
+    // lives inside the memory and keeps returning whatever imem_addr points
+    // at — and imem_addr was pc_reg, one *ahead* of pc_fetch. So after one
+    // stall cycle the memory hands back the instruction for pc_reg while
+    // pc_fetch still names the older address, and IF/ID latches a PC paired
+    // with the wrong instruction.
+    //
+    // A branch that arrives carrying its predecessor's PC then resolves under
+    // that PC: it writes the BTB entry for an address that is not a branch,
+    // and the fetch is redirected backwards there forever after. That is what
+    // made a status poll never terminate.
+    assign imem_addr = stall_id ? pc_fetch : pc_if;
 
     // Combine flush sources (branch predictor + hazard)
     assign flush_if_id = flush_if_id_bp;
@@ -263,7 +281,7 @@ module riscv_core (
 
     // ========== MEM stage ==================================================
 
-    logic [31:0] mem_read_data, mem_alu_result_out;
+    logic [31:0] mem_alu_result_out;
     ctrl_t       mem_ctrl_out;
     logic [4:0]  mem_rd_out;
 
@@ -278,8 +296,6 @@ module riscv_core (
         .dmem_wdata(dmem_wdata),
         .dmem_be(dmem_be),
         .dmem_we(dmem_we),
-        .dmem_rdata(dmem_rdata),
-        .mem_read_data(mem_read_data),
         .alu_result_out(mem_alu_result_out),
         .ctrl_out(mem_ctrl_out),
         .rd_out(mem_rd_out)
@@ -291,15 +307,27 @@ module riscv_core (
         if (rst) begin
             memwb_ctrl       <= NOP_CTRL;
             memwb_alu_result <= 32'd0;
-            memwb_mem_data   <= 32'd0;
             memwb_rd         <= 5'd0;
         end else begin
             memwb_ctrl       <= mem_ctrl_out;
             memwb_alu_result <= mem_alu_result_out;
-            memwb_mem_data   <= mem_read_data;
             memwb_rd         <= mem_rd_out;
         end
     end
+
+    // The loaded word, formatted in WB from the *live* bus.
+    //
+    // The data memory is synchronous, so the word for the address issued in
+    // MEM arrives here, one cycle later. Registering it at the end of MEM —
+    // which is what this used to do — captured the previous access's data
+    // instead, so every load returned the word for whatever address the bus
+    // carried before it.
+    //
+    // The address and funct3 come from MEM/WB, which is the load's own; only
+    // the data is taken live.
+    logic [31:0] memwb_mem_data;
+    assign memwb_mem_data = load_extend(memwb_ctrl.funct3,
+                                        memwb_alu_result[1:0], dmem_rdata);
 
     // ========== WB stage ===================================================
 
