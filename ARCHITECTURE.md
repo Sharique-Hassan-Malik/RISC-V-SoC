@@ -3,7 +3,7 @@
 Eight hardware modules and the two things that make them a system: a memory map
 generated for both sides of the hardware/software boundary, and a harness that
 knows how to build three HDLs. Each module's own design is in [`docs/`](docs);
-the SoC and its defects are in [`docs/soc.md`](docs/soc.md).
+the SoC itself is in [`docs/soc.md`](docs/soc.md).
 
 ```
              socgen/                                   rtl/
