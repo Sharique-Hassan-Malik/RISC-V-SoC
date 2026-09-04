@@ -1,10 +1,11 @@
 # RISC-V SoC
 
 A five-stage RV32I core, an AES-128 accelerator, UART and SPI IP, a
-ring-oscillator TRNG, and three graphics/audio designs — plus the thing that
-turns eight separate FPGA projects into one system: **a memory map both the
-hardware and the firmware are generated from**, and a build harness that knows
-how to simulate Verilog, SystemVerilog and VHDL.
+ring-oscillator TRNG, a CLINT, and three graphics/audio designs — nine separate
+FPGA projects, plus the three things that let four of them become one system: **a
+memory map both the hardware and the firmware are generated from**, a core that
+can be **interrupted and resumed**, and a build harness that knows how to
+simulate Verilog, SystemVerilog and VHDL.
 
 ```
 soc modules              # what is here, in which HDL, and how to run it
@@ -21,11 +22,13 @@ $ soc sim
   uart-spi:uart              PASS                                45.3s
   uart-spi:spi               PASS                                25.2s
   aes:core                   PASS                                 0.8s
+  clint:clint                PASS                                 0.1s
   trng:trng                  PASS                                 0.2s
   pong:ball                  PASS                                 0.0s
   mandelbrot:mandelbrot      PASS                                25.2s
   synth:synth                PASS                               170.1s
   core:soc                   PASS                                29.5s
+  core:traps                 PASS                                30.4s
 ```
 
 ## The SoC
@@ -44,9 +47,32 @@ $ soc sim --only soc
 That last line is the whole point. A program — assembled by `socgen/asm.py`
 from the addresses in `socgen/memmap.py` — runs on the RISC-V core, is routed by
 the address decoder in `rtl/soc_top.sv`, drives the AES accelerator through a
-register adapter, and produces the FIPS-197 §C.1 ciphertext. None of the eight
-projects could test that alone, because none of them contained more than one
+register adapter, and produces the FIPS-197 §C.1 ciphertext. None of the nine
+projects could test that alone, because none of them contains more than one
 piece of it.
+
+## Interrupts
+
+```
+$ soc sim --only traps
+
+  after 3000 cycles: main=941 ticks=7 cause=80000007 mepc=00000088
+  PASS  the timer interrupt fired
+  PASS  it fired repeatedly (re-arming works)
+  PASS  mcause is the machine timer interrupt (0x80000007)
+  PASS  the interrupted loop kept running after mret
+```
+
+The UART has carried `IRQ_EN` and `IRQ_STAT` registers since it was written, and
+for as long as the core had no CSRs that line went nowhere: the only way to use
+the UART was to poll it. The core now implements machine-mode CSRs,
+`ECALL`/`EBREAK`/`MRET` and precise traps, and the [`clint`](modules/clint)
+supplies a timer to fire them.
+
+The assertion that matters is the last one. A core that jumped to `mtvec` and
+never came back would satisfy "the handler ran"; only the interrupted loop
+*continuing to count* shows that `mepc` was right and `mret` returned to it.
+[`docs/traps.md`](docs/traps.md) is the specification.
 
 | Region | Base | Size | Purpose |
 |---|---|---|---|
@@ -61,11 +87,12 @@ The map is a Python table. `soc gen` emits `rtl/soc_map.svh` for the decoder,
 committed headers no longer match the table. A memory map that exists in three
 places drifts, and the symptom is a store that silently goes nowhere.
 
-## The eight modules
+## The nine projects
 
-| Module | HDL | What it is |
+| Project | HDL | What it is |
 |---|---|---|
-| [`core`](modules/core) | SystemVerilog | Five-stage RV32I: hazard detection, forwarding, branch prediction, performance counters. |
+| [`core`](modules/core) | SystemVerilog | Five-stage RV32I: hazard detection, forwarding, branch prediction, machine-mode CSRs and precise traps. |
+| [`clint`](modules/clint) | SystemVerilog | The machine timer and software interrupt — a 64-bit `mtime`, an `mtimecmp`, and `msip`. |
 | [`aes`](modules/aes) | Verilog | Round-based AES-128 with an AXI-lite wrapper, checked against FIPS-197. |
 | [`uart-spi`](modules/uart-spi) | SystemVerilog | Parameterised UART with a synchronous FIFO; SPI master covering all four modes. |
 | [`trng`](modules/trng) | VHDL | Ring-oscillator entropy, von Neumann de-biasing, AES-S-box whitening, NIST STS tooling. |

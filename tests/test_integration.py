@@ -1,4 +1,4 @@
-"""Cross-module tests — what is only true because these eight are one repo.
+"""Cross-module tests — what is only true because these nine are one repo.
 
 The hardware modules verify themselves through their own testbenches, which
 this suite runs. What it adds is everything about them as a *system*: that the
@@ -151,7 +151,7 @@ class TestFirmwareUsesTheMap:
 class TestCrossHdlConsistency:
     """The AES S-box is written twice, in Verilog and in VHDL — once for the
     accelerator, once for the TRNG's whitener. They have to be the same 256
-    bytes, and nothing checked that until these were one repository.
+    bytes, and neither project can check that alone.
 
     The two files do not even use the same shape: the Verilog is a case
     statement pairing index with value, the VHDL an ordered array. Comparing
@@ -235,7 +235,7 @@ class TestSimulations:
         assert result.ok, "\n".join(result.tail)
 
     def test_the_soc_runs_a_program_that_drives_the_accelerator(self):
-        """The thing none of the eight could test alone.
+        """The thing none of the nine could test alone.
 
         A program, assembled from the memory map, running on the RISC-V core,
         reaching the AES accelerator through the address decoder, producing the

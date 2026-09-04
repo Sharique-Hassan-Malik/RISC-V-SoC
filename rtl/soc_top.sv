@@ -7,8 +7,11 @@
 // header cannot drift apart.
 //
 // The decode is on the top nibble of the address. One four-bit comparison is a
-// single LUT level, and an SoC with four peripherals does not need a finer
-// split.
+// single LUT level, and an SoC this size does not need a finer split.
+//
+// The CLINT is what lets an interrupt reach the core at all: the UART has had
+// IRQ_EN and IRQ_STAT since it was written, and before the core had CSRs there
+// was nothing on the other end of that line. See docs/traps.md.
 //
 // The TRNG is deliberately absent from this file. It is VHDL, and mixing VHDL
 // into a Verilator or Icarus elaboration needs a mixed-language flow that is
@@ -57,7 +60,13 @@ module soc_top #(
         .perf_instret      (dbg_instret),
         .perf_branches     (perf_branches),
         .perf_mispredicts  (perf_mispredicts),
-        .perf_stall_cycles (perf_stall_cycles)
+        .perf_stall_cycles (perf_stall_cycles),
+        .irq_timer         (clint_mtip),
+        .irq_soft          (clint_msip),
+        // The UART's own irq line, which had nowhere to go until the core grew
+        // an mip. It is the machine *external* interrupt here: there is no
+        // PLIC, so with one external source the two are the same thing.
+        .irq_ext           (uart_irq)
     );
 
     imem u_imem (.clk(clk), .addr(imem_addr), .data(imem_data));
@@ -67,10 +76,11 @@ module soc_top #(
 
     // ---- address decode -----------------------------------------------------
 
-    logic sel_ram, sel_uart, sel_spi, sel_aes;
+    logic sel_ram, sel_uart, sel_spi, sel_aes, sel_clint;
 
     always_comb begin
         sel_ram  = (dmem_addr[31:28] == RAM_BASE[31:28]);
+        sel_clint = (dmem_addr[31:28] == CLINT_BASE[31:28]);
         sel_uart = (dmem_addr[31:28] == UART_BASE[31:28]) &&
                    (dmem_addr[15:12] == UART_BASE[15:12]);
         sel_spi  = (dmem_addr[31:28] == SPI_BASE[31:28]) &&
@@ -134,24 +144,47 @@ module soc_top #(
         .rdata (aes_rdata)
     );
 
+    // ---- CLINT --------------------------------------------------------------
+    //
+    // The timer and software interrupt. Its window is 64 kB rather than the
+    // 4 kB the other peripherals get, because mtime sits at offset 0xBFF8 —
+    // SiFive's layout, kept so existing firmware is not wrong here.
+
+    logic [31:0] clint_rdata;
+    logic        clint_mtip, clint_msip;
+
+    clint u_clint (
+        .clk   (clk),
+        .rst   (rst),
+        .sel   (sel_clint),
+        .addr  (dmem_addr[15:0]),
+        .we    (dmem_we),
+        .wdata (dmem_wdata),
+        .rdata (clint_rdata),
+        .mtip  (clint_mtip),
+        .msip  (clint_msip)
+    );
+
     // ---- read mux -----------------------------------------------------------
     //
     // Registered one cycle behind the select, because RAM and the UART both
     // return their data a cycle after the address — muxing on the current
     // select would return the previous peripheral's data.
 
-    logic sel_ram_q, sel_uart_q, sel_aes_q;
+    logic sel_ram_q, sel_uart_q, sel_aes_q, sel_clint_q;
 
     always_ff @(posedge clk) begin
-        sel_ram_q  <= sel_ram;
-        sel_uart_q <= sel_uart;
-        sel_aes_q  <= sel_aes;
+        sel_ram_q   <= sel_ram;
+        sel_uart_q  <= sel_uart;
+        sel_aes_q   <= sel_aes;
+        sel_clint_q <= sel_clint;
     end
 
     always_comb begin
-        if      (sel_uart_q) dmem_rdata = uart_rdata;
-        else if (sel_aes_q)  dmem_rdata = aes_rdata;
-        else if (sel_ram_q)  dmem_rdata = ram_rdata;
+        if      (sel_uart_q)  dmem_rdata = uart_rdata;
+        else if (sel_aes_q)   dmem_rdata = aes_rdata;
+        else if (sel_clint_q) dmem_rdata = clint_rdata;
+        else if (sel_ram_q)   dmem_rdata = ram_rdata;
         // An unmapped read returns zero rather than X. X would propagate into
         // the pipeline and turn a wrong address into an unreadable waveform
         // half a screen later.

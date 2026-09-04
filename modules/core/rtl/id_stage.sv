@@ -80,6 +80,11 @@ module id_stage (
             OP_OP_IMM:               imm = imm_i;
             OP_BRANCH:               imm = imm_b;
             OP_STORE:                imm = imm_s;
+            // A SYSTEM instruction carries its CSR address here, zero-extended
+            // rather than sign-extended: it is a 12-bit unsigned index, and
+            // sign-extending 0x800 upward would make every counter CSR
+            // unreachable.
+            OP_SYSTEM:               imm = {20'd0, instr[31:20]};
             default:                 imm = 32'd0;
         endcase
     end
@@ -91,29 +96,34 @@ module id_stage (
 
         case (opcode)
             OP_LUI: begin
+                ctrl.valid = 1'b1;
                 ctrl.reg_write = 1'b1;
                 ctrl.alu_src   = 1'b1;
                 ctrl.lui       = 1'b1;
                 ctrl.alu_op    = ALU_LUI;
             end
             OP_AUIPC: begin
+                ctrl.valid = 1'b1;
                 ctrl.reg_write = 1'b1;
                 ctrl.alu_src   = 1'b1;
                 ctrl.auipc     = 1'b1;
                 ctrl.alu_op    = ALU_ADD;
             end
             OP_JAL: begin
+                ctrl.valid = 1'b1;
                 ctrl.reg_write = 1'b1;
                 ctrl.jal       = 1'b1;
                 ctrl.alu_op    = ALU_ADD;
             end
             OP_JALR: begin
+                ctrl.valid = 1'b1;
                 ctrl.reg_write = 1'b1;
                 ctrl.jalr      = 1'b1;
                 ctrl.alu_src   = 1'b1;
                 ctrl.alu_op    = ALU_ADD;
             end
             OP_BRANCH: begin
+                ctrl.valid = 1'b1;
                 ctrl.branch    = 1'b1;
                 // ALU performs comparison; result used for taken decision
                 case (funct3)
@@ -126,6 +136,7 @@ module id_stage (
                 endcase
             end
             OP_LOAD: begin
+                ctrl.valid = 1'b1;
                 ctrl.reg_write = 1'b1;
                 ctrl.mem_read  = 1'b1;
                 ctrl.mem_to_reg = 1'b1;
@@ -133,11 +144,13 @@ module id_stage (
                 ctrl.alu_op    = ALU_ADD;
             end
             OP_STORE: begin
+                ctrl.valid = 1'b1;
                 ctrl.mem_write = 1'b1;
                 ctrl.alu_src   = 1'b1;
                 ctrl.alu_op    = ALU_ADD;
             end
             OP_OP_IMM: begin
+                ctrl.valid = 1'b1;
                 ctrl.reg_write = 1'b1;
                 ctrl.alu_src   = 1'b1;
                 case (funct3)
@@ -153,6 +166,7 @@ module id_stage (
                 endcase
             end
             OP_OP: begin
+                ctrl.valid = 1'b1;
                 ctrl.reg_write = 1'b1;
                 case (funct3)
                     F3_ADD_SUB: ctrl.alu_op = funct7_30 ? ALU_SUB : ALU_ADD;
@@ -165,6 +179,32 @@ module id_stage (
                     F3_AND:     ctrl.alu_op = ALU_AND;
                     default:    ctrl.alu_op = ALU_ADD;
                 endcase
+            end
+            OP_SYSTEM: begin
+                ctrl.valid = 1'b1;
+                if (funct3 == F3_PRIV) begin
+                    // funct12 names the operation; rd and rs1 must be x0 and
+                    // are not checked, because there is no illegal-instruction
+                    // trap to report a violation through.
+                    case (instr[31:20])
+                        F12_ECALL:  ctrl.is_ecall  = 1'b1;
+                        F12_EBREAK: ctrl.is_ebreak = 1'b1;
+                        F12_MRET:   ctrl.is_mret   = 1'b1;
+                        default:    ctrl.valid     = 1'b0;   // FENCE.I etc: a NOP
+                    endcase
+                end else begin
+                    ctrl.is_csr    = 1'b1;
+                    ctrl.reg_write = 1'b1;         // rd receives the OLD value
+                    ctrl.csr_imm   = funct3[2];    // 1xx are the uimm forms
+                    ctrl.alu_op    = ALU_ADD;
+                end
+            end
+            OP_MISC_MEM: begin
+                // FENCE. This core has one hart, in-order, with no store
+                // buffer, so ordering is already what a fence would ask for.
+                // Decoded explicitly so it retires as a NOP rather than
+                // falling into `default` and looking like an unknown opcode.
+                ctrl.valid = 1'b1;
             end
             default: ctrl = NOP_CTRL;
         endcase

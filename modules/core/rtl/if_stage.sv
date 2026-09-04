@@ -36,6 +36,13 @@ module if_stage (
     input  logic        ex_jump_valid,     // JAL / JALR resolved
     input  logic [31:0] ex_jump_target,
 
+    // Trap entry or MRET, from the CSR file. Outranks everything: the trap
+    // cancels the instruction in EX, including a branch resolving this very
+    // cycle, and that instruction is re-fetched from mepc after the handler
+    // returns. Letting the branch win would return into the handler's target.
+    input  logic        trap_valid,
+    input  logic [31:0] trap_target,
+
     // The prediction that was made for the branch now resolving, carried down
     // the pipeline with it. See `mispredicted` below for why the BHT's current
     // contents cannot be used instead.
@@ -136,7 +143,7 @@ module if_stage (
     end
 
     // ---- PC mux ----------------------------------------------------------
-    // Priority: jump > misprediction correction > prediction > PC+4
+    // Priority: trap > jump > misprediction correction > prediction > PC+4
     logic mispredicted;
     // Compare the outcome against the prediction *that was actually made for
     // this branch*, not against the BHT's contents now.
@@ -162,10 +169,12 @@ module if_stage (
 
     //: Anything that makes the fetched path wrong. Drives both flushes and,
     //: crucially, overrides the stall on the PC register above.
-    assign redirect = ex_jump_valid || mispredicted;
+    assign redirect = trap_valid || ex_jump_valid || mispredicted;
 
     always_comb begin
-        if (ex_jump_valid)
+        if (trap_valid)
+            pc_next = trap_target;
+        else if (ex_jump_valid)
             pc_next = ex_jump_target;
         else if (mispredicted)
             // Only a resolved, taken branch has a target worth going to; a

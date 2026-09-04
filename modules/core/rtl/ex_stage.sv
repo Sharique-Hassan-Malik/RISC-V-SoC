@@ -44,6 +44,10 @@ module ex_stage (
     // Outputs to MEM/WB pipeline register
     output logic [31:0] alu_result,
     output logic [31:0] rs2_fwd,       // forwarded store data
+    // The forwarded rs1. The CSR file needs it: `csrw mtvec, t0` must see a t0
+    // written by the instruction immediately before, and rs1_data from ID/EX
+    // is still the stale register-file value at that point.
+    output logic [31:0] rs1_fwd,
     output ctrl_t       ctrl_out,
     output logic [4:0]  rd_out,
     output logic [31:0] pc_plus4       // for JAL/JALR return address
@@ -67,6 +71,7 @@ module ex_stage (
 
     // rs2_fwd carries the (possibly forwarded) store data to MEM
     assign rs2_fwd = alu_b_reg;
+    assign rs1_fwd = alu_a;
 
     // ALU second operand: immediate or register
     wire [31:0] alu_b = ctrl.alu_src ? imm : alu_b_reg;

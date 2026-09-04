@@ -36,6 +36,13 @@ module riscv_core (
     output logic        dmem_we,
     input  logic [31:0] dmem_rdata,
 
+    // Interrupt inputs. Levels, not pulses: the CLINT's mtip stays asserted
+    // until the handler moves mtimecmp, and the UART's line until its IRQ_STAT
+    // is cleared. See docs/traps.md.
+    input  logic        irq_timer,
+    input  logic        irq_soft,
+    input  logic        irq_ext,
+
     // Performance counter outputs
     output logic [63:0] perf_cycles,
     output logic [63:0] perf_instret,
@@ -101,6 +108,8 @@ module riscv_core (
         .ex_branch_target(ex_branch_target),
         .ex_jump_valid(ex_jump_valid),
         .ex_jump_target(ex_jump_target),
+        .trap_valid(trap_valid),
+        .trap_target(trap_target),
         .ex_predicted_taken(idex_predicted),
         .flush_if_id(flush_if_id_bp),
         .flush_id_ex(flush_id_ex_bp),
@@ -147,6 +156,13 @@ module riscv_core (
     logic        predict_taken_if;
     logic        predicted_fetch;
     logic        ifid_predicted, idex_predicted;
+    // Whether IF/ID holds a fetched instruction or an injected bubble.
+    //
+    // This cannot be recovered by decoding. The bubble this pipeline injects is
+    // `32'h0000_0013` — a real ADDI x0, x0, 0 — so `ctrl.valid` is 1 for it,
+    // and a trap taken on one would write the bubble's zeroed PC into mepc and
+    // return into address 0 after mret.
+    logic        ifid_valid;
     // A redirect has to kill TWO fetched instructions, not one: the one in
     // IF/ID, and the one still inside the instruction memory whose address was
     // presented before the redirect. `flush_if_id` clears the first. This bit
@@ -176,10 +192,12 @@ module riscv_core (
             ifid_pc        <= 32'd0;
             ifid_instr     <= 32'h0000_0013;   // NOP
             ifid_predicted <= 1'b0;
+            ifid_valid     <= 1'b0;
         end else if (!stall_id) begin
             ifid_pc        <= pc_fetch;
             ifid_instr     <= imem_data;
             ifid_predicted <= predicted_fetch;
+            ifid_valid     <= 1'b1;
         end
     end
 
@@ -203,6 +221,15 @@ module riscv_core (
     logic [31:0] id_rs1_data, id_rs2_data, id_imm;
     ctrl_t       id_ctrl;
 
+    // The decoded control word, with `valid` qualified by whether IF/ID held a
+    // real fetch. Everything else about a bubble already behaves as a NOP; only
+    // `valid` needs the extra bit, and only traps read it.
+    ctrl_t       id_ctrl_q;
+    always_comb begin
+        id_ctrl_q       = id_ctrl;
+        id_ctrl_q.valid = id_ctrl.valid && ifid_valid;
+    end
+
     // ========== ID/EX pipeline register ====================================
 
     always_ff @(posedge clk) begin
@@ -219,7 +246,7 @@ module riscv_core (
             idex_rs2_data <= 32'd0;
             idex_imm      <= 32'd0;
         end else begin
-            idex_ctrl     <= id_ctrl;
+            idex_ctrl     <= id_ctrl_q;
             idex_predicted <= ifid_predicted;
             idex_pc       <= ifid_pc;
             idex_rs1      <= idex_rs1_w;
@@ -233,7 +260,7 @@ module riscv_core (
 
     // ========== EX stage ===================================================
 
-    logic [31:0] ex_alu_result, ex_rs2_fwd;
+    logic [31:0] ex_alu_result, ex_rs2_fwd, ex_rs1_fwd;
     ctrl_t       ex_ctrl_out;
     logic [4:0]  ex_rd_out;
     logic [31:0] ex_pc_plus4;
@@ -256,15 +283,60 @@ module riscv_core (
         .ex_jump_target(ex_jump_target),
         .alu_result(ex_alu_result),
         .rs2_fwd(ex_rs2_fwd),
+        .rs1_fwd(ex_rs1_fwd),
         .ctrl_out(ex_ctrl_out),
         .rd_out(ex_rd_out),
         .pc_plus4(ex_pc_plus4)
     );
 
+    // ========== CSRs and traps =============================================
+    //
+    // Fed from the ID/EX register, so it sees exactly the instruction in EX.
+    // `imm` carries the CSR address for a SYSTEM instruction; the write source
+    // is rs1 for the register forms and the zero-extended rs1 *field* for the
+    // immediate ones.
+    //
+    // The rs1 value is taken forwarded (`ex_rs1_fwd`) rather than raw, so
+    // `csrw mtvec, t0` sees a t0 written by the instruction immediately before
+    // it. Reading idex_rs1_data directly would use a stale register value and
+    // install the wrong trap vector — a fault that only appears when the two
+    // instructions are adjacent.
+    logic        trap_valid;
+    logic [31:0] trap_target;
+    logic [31:0] csr_rdata;
+    logic [31:0] csr_wsrc;
+
+    assign csr_wsrc = idex_ctrl.csr_imm ? {27'd0, idex_rs1} : ex_rs1_fwd;
+
+    csr_file u_csr (
+        .clk(clk), .rst(rst),
+        .ex_ctrl(idex_ctrl),
+        .ex_pc(idex_pc),
+        .csr_addr(idex_imm[11:0]),
+        .csr_wsrc(csr_wsrc),
+        .csr_rs1(idex_rs1),
+        .irq_timer(irq_timer),
+        .irq_soft(irq_soft),
+        .irq_ext(irq_ext),
+        .instr_retired(memwb_ctrl.valid),
+        .csr_rdata(csr_rdata),
+        .trap_valid(trap_valid),
+        .trap_target(trap_target)
+    );
+
+    // A CSR instruction writes back the CSR's old value, so it displaces the
+    // ALU result on the way into EX/MEM. Everything downstream is unchanged.
+    logic [31:0] ex_result;
+    assign ex_result = idex_ctrl.is_csr ? csr_rdata : ex_alu_result;
+
     // ========== EX/MEM pipeline register ===================================
 
     always_ff @(posedge clk) begin
-        if (rst) begin
+        // A trap cancels the instruction in EX. Its control word must not reach
+        // MEM: stores commit there, and a cancelled store that still wrote
+        // memory would make mepc name an instruction that had half executed,
+        // so mret would run it a second time.
+        if (rst || trap_valid) begin
             exmem_ctrl       <= NOP_CTRL;
             exmem_alu_result <= 32'd0;
             exmem_rs2_data   <= 32'd0;
@@ -272,7 +344,7 @@ module riscv_core (
             exmem_pc_plus4   <= 32'd0;
         end else begin
             exmem_ctrl       <= ex_ctrl_out;
-            exmem_alu_result <= ex_alu_result;
+            exmem_alu_result <= ex_result;
             exmem_rs2_data   <= ex_rs2_fwd;
             exmem_rd         <= ex_rd_out;
             exmem_pc_plus4   <= ex_pc_plus4;
@@ -370,9 +442,10 @@ module riscv_core (
         end else begin
             perf_cycles <= perf_cycles + 1;
 
-            // Instruction retired = WB has a non-NOP control word
-            if (memwb_ctrl.reg_write || memwb_ctrl.mem_write ||
-                memwb_ctrl.branch)
+            // Instruction retired = WB holds a real instruction. The old test
+            // enumerated control bits and so missed every instruction that
+            // sets none of them — a FENCE, an ECALL, an MRET.
+            if (memwb_ctrl.valid)
                 perf_instret <= perf_instret + 1;
 
             if (ex_branch_valid)

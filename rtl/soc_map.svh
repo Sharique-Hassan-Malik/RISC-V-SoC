@@ -46,6 +46,16 @@ localparam logic [31:0] AES_OUT1 = 32'h20000034;  // ciphertext bits 63:32
 localparam logic [31:0] AES_OUT2 = 32'h20000038;  // ciphertext bits 95:64
 localparam logic [31:0] AES_OUT3 = 32'h2000003C;  // ciphertext bits 127:96
 
+// Core-local interruptor: the machine timer and the software interrupt. The offsets are SiFive's, because every RISC-V bootloader already expects them; mtime at 0xBFF8 is why the window is 64 KB and not 4 KB like the others.
+localparam logic [31:0] CLINT_BASE = 32'h40000000;
+localparam logic [31:0] CLINT_SIZE = 32'h00010000;
+localparam logic [31:0] CLINT_LIMIT = 32'h4000FFFF;
+localparam logic [31:0] CLINT_MSIP = 32'h40000000;  // bit0: raise the machine software interrupt
+localparam logic [31:0] CLINT_MTIMECMP_LO = 32'h40004000;  // timer deadline, bits 31:0
+localparam logic [31:0] CLINT_MTIMECMP_HI = 32'h40004004;  // timer deadline, bits 63:32
+localparam logic [31:0] CLINT_MTIME_LO = 32'h4000BFF8;  // free-running counter, bits 31:0, read-only
+localparam logic [31:0] CLINT_MTIME_HI = 32'h4000BFFC;  // free-running counter, bits 63:32, read-only
+
 // Ring-oscillator entropy source, von Neumann de-biased and whitened. VHDL, so it attaches at synthesis rather than in the mixed-language simulation.
 localparam logic [31:0] TRNG_BASE = 32'h30000000;
 localparam logic [31:0] TRNG_SIZE = 32'h00001000;

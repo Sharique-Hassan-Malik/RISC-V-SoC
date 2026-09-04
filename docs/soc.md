@@ -1,6 +1,6 @@
 # The SoC
 
-`rtl/soc_top.sv` is the file none of the eight projects contained: the RISC-V
+`rtl/soc_top.sv` is the file none of the nine projects contained: the RISC-V
 core with peripherals on its data bus, decoded against a map that the firmware
 is also generated from.
 

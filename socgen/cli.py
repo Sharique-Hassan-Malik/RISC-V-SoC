@@ -1,4 +1,4 @@
-"""`soc` — one command over eight hardware modules and the SoC they compose.
+"""`soc` — one command over nine hardware modules and the SoC they compose.
 
     soc modules                what is here, in which HDL, and how to run it
     soc map                    the memory map
@@ -121,7 +121,7 @@ def _cmd_lint(args) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="soc",
-        description="A RISC-V SoC and the eight hardware modules it is built from.",
+        description="A RISC-V SoC and the nine hardware modules it is built from.",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 

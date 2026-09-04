@@ -97,6 +97,20 @@ MAP: tuple[Region, ...] = (
         ),
     ),
     Region(
+        "clint", 0x4000_0000, 64 * 1024, "peripheral",
+        "Core-local interruptor: the machine timer and the software interrupt. "
+        "The offsets are SiFive's, because every RISC-V bootloader already "
+        "expects them; mtime at 0xBFF8 is why the window is 64 KB and not 4 KB "
+        "like the others.",
+        registers=(
+            ("MSIP", 0x0000, "bit0: raise the machine software interrupt"),
+            ("MTIMECMP_LO", 0x4000, "timer deadline, bits 31:0"),
+            ("MTIMECMP_HI", 0x4004, "timer deadline, bits 63:32"),
+            ("MTIME_LO", 0xBFF8, "free-running counter, bits 31:0, read-only"),
+            ("MTIME_HI", 0xBFFC, "free-running counter, bits 63:32, read-only"),
+        ),
+    ),
+    Region(
         "trng", 0x3000_0000, 4 * 1024, "peripheral",
         "Ring-oscillator entropy source, von Neumann de-biased and whitened. "
         "VHDL, so it attaches at synthesis rather than in the mixed-language "

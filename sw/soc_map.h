@@ -46,6 +46,15 @@
 #define AES_OUT2  0x20000038u  /* ciphertext bits 95:64 */
 #define AES_OUT3  0x2000003Cu  /* ciphertext bits 127:96 */
 
+/* Core-local interruptor: the machine timer and the software interrupt. The offsets are SiFive's, because every RISC-V bootloader already expects them; mtime at 0xBFF8 is why the window is 64 KB and not 4 KB like the others. */
+#define CLINT_BASE  0x40000000u
+#define CLINT_SIZE  0x00010000u
+#define CLINT_MSIP  0x40000000u  /* bit0: raise the machine software interrupt */
+#define CLINT_MTIMECMP_LO  0x40004000u  /* timer deadline, bits 31:0 */
+#define CLINT_MTIMECMP_HI  0x40004004u  /* timer deadline, bits 63:32 */
+#define CLINT_MTIME_LO  0x4000BFF8u  /* free-running counter, bits 31:0, read-only */
+#define CLINT_MTIME_HI  0x4000BFFCu  /* free-running counter, bits 63:32, read-only */
+
 /* Ring-oscillator entropy source, von Neumann de-biased and whitened. VHDL, so it attaches at synthesis rather than in the mixed-language simulation. */
 #define TRNG_BASE  0x30000000u
 #define TRNG_SIZE  0x00001000u

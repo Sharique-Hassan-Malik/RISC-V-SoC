@@ -1,8 +1,9 @@
-"""The eight modules, their HDL, and how each one is actually simulated.
+"""The nine projects, their HDL, and how each one is actually simulated.
 
-The `Bench` entries here are the executable form of what used to be prose in
-eight READMEs: which files, which include path, which top level, and what the
-testbench prints when it is happy.
+The `Bench` entries are the executable form of what would otherwise be prose in
+nine READMEs: which files, which include path, which top level, and what the
+testbench prints when it is happy. Prose cannot be run, so it drifts from the
+build; this cannot.
 """
 
 from __future__ import annotations
@@ -47,6 +48,13 @@ def _write_defect_program(cwd: Path) -> None:
     asm.write_hex(cwd / "program.hex")
 
 
+def _write_timer_demo(cwd: Path) -> None:
+    """Assemble the interrupt demonstration into the simulation's directory."""
+    from . import firmware
+
+    firmware.write_timer_demo(cwd / "program.hex")
+
+
 def _write_firmware(cwd: Path) -> None:
     """Assemble the SoC's program into the simulation's working directory.
 
@@ -78,7 +86,7 @@ class Module:
 _CORE_RTL = (
     "rtl/rv32i_pkg.sv", "rtl/riscv_core.sv", "rtl/if_stage.sv", "rtl/id_stage.sv",
     "rtl/ex_stage.sv", "rtl/mem_stage.sv", "rtl/wb_stage.sv", "rtl/hazard_unit.sv",
-    "rtl/memories.sv",
+    "rtl/memories.sv", "rtl/csr_file.sv",
 )
 
 
@@ -126,6 +134,18 @@ MANIFEST: tuple[Module, ...] = (
                            "rtl/aes_final_round.v", "rtl/aes_key_expand.v",
                            "rtl/aes128_core.v", "sim/tb_aes128_core.v"),
                   include_dirs=("rtl",), expect="All 4 vectors PASSED"),
+        ),
+    ),
+    Module(
+        name="clint", title="Core-local interruptor", language=SYSTEMVERILOG,
+        summary="The machine timer and software interrupt: a free-running "
+                "64-bit mtime, an mtimecmp, and the msip bit. What makes an "
+                "interrupt able to reach the core at all.",
+        peripheral="0x4000_0000",
+        benches=(
+            Bench(name="clint", language=SYSTEMVERILOG, top="tb_clint",
+                  sources=("rtl/clint.sv", "sim/tb_clint.sv"),
+                  include_dirs=("rtl",), expect="CLINT SIMULATION PASSED"),
         ),
     ),
     Module(
@@ -198,8 +218,10 @@ SOC_BENCH = Bench(
         "../aes/rtl/aes_sbox.v", "../aes/rtl/aes_mixcol.v", "../aes/rtl/aes_round.v",
         "../aes/rtl/aes_final_round.v", "../aes/rtl/aes_key_expand.v",
         "../aes/rtl/aes128_core.v",
+        "../clint/rtl/clint.sv",
     ),
-    include_dirs=("rtl", "../../rtl", "../uart-spi/rtl", "../aes/rtl"),
+    include_dirs=("rtl", "../../rtl", "../uart-spi/rtl", "../aes/rtl",
+                  "../clint/rtl"),
     expect="SOC SIMULATION PASSED",
     prepare=_write_firmware,
 )
@@ -260,6 +282,17 @@ def _write_poll_program(cwd: Path) -> None:
     asm.write_hex(cwd / "program.hex")
 
 
+TRAPS_BENCH = Bench(
+    name="traps",
+    language=SYSTEMVERILOG,
+    top="tb_traps",
+    sources=("../../sim/tb_traps.sv",) + SOC_BENCH.sources[1:],
+    include_dirs=SOC_BENCH.include_dirs,
+    expect="TRAPS SIMULATION PASSED",
+    prepare=_write_timer_demo,
+)
+
+
 LOAD_BENCH = Bench(
     name="load",
     language=SYSTEMVERILOG,
@@ -272,8 +305,10 @@ LOAD_BENCH = Bench(
         "../aes/rtl/aes_sbox.v", "../aes/rtl/aes_mixcol.v", "../aes/rtl/aes_round.v",
         "../aes/rtl/aes_final_round.v", "../aes/rtl/aes_key_expand.v",
         "../aes/rtl/aes128_core.v",
+        "../clint/rtl/clint.sv",
     ),
-    include_dirs=("rtl", "../../rtl", "../uart-spi/rtl", "../aes/rtl"),
+    include_dirs=("rtl", "../../rtl", "../uart-spi/rtl", "../aes/rtl",
+                  "../clint/rtl"),
     expect="LOADS CORRECT",
     prepare=_write_load_program,
 )
@@ -291,8 +326,10 @@ POLL_BENCH = Bench(
         "../aes/rtl/aes_sbox.v", "../aes/rtl/aes_mixcol.v", "../aes/rtl/aes_round.v",
         "../aes/rtl/aes_final_round.v", "../aes/rtl/aes_key_expand.v",
         "../aes/rtl/aes128_core.v",
+        "../clint/rtl/clint.sv",
     ),
-    include_dirs=("rtl", "../../rtl", "../uart-spi/rtl", "../aes/rtl"),
+    include_dirs=("rtl", "../../rtl", "../uart-spi/rtl", "../aes/rtl",
+                  "../clint/rtl"),
     expect="POLL FIXED",
     prepare=_write_poll_program,
 )
@@ -310,8 +347,10 @@ DEFECT_BENCH = Bench(
         "../aes/rtl/aes_sbox.v", "../aes/rtl/aes_mixcol.v", "../aes/rtl/aes_round.v",
         "../aes/rtl/aes_final_round.v", "../aes/rtl/aes_key_expand.v",
         "../aes/rtl/aes128_core.v",
+        "../clint/rtl/clint.sv",
     ),
-    include_dirs=("rtl", "../../rtl", "../uart-spi/rtl", "../aes/rtl"),
+    include_dirs=("rtl", "../../rtl", "../uart-spi/rtl", "../aes/rtl",
+                  "../clint/rtl"),
     expect="DEFECTS FIXED",
     prepare=_write_defect_program,
 )
@@ -339,4 +378,5 @@ def benches(include_soc: bool = False) -> list[tuple[str, Bench]]:
         # Run from the core's directory: its `include` of rv32i_pkg.sv is by
         # bare filename, so that directory has to be the working one.
         found.append(("core", SOC_BENCH))
+        found.append(("core", TRAPS_BENCH))
     return found

@@ -1,4 +1,4 @@
-"""Building and simulating eight hardware modules in three HDLs, one way.
+"""Building and simulating nine hardware modules in three HDLs, one way.
 
 Every project here knew how to build itself and none of it was written down.
 The knowledge is real and unobvious:
@@ -14,7 +14,7 @@ The knowledge is real and unobvious:
   * A VHDL testbench with free-running oscillators never terminates, so it
     needs `--stop-time`.
 
-None of that belongs in eight READMEs. It belongs here, once, checked by tests
+None of that belongs in nine READMEs. It belongs here, once, checked by tests
 that actually run the simulations.
 """
 

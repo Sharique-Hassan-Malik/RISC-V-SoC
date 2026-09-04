@@ -52,6 +52,47 @@ package rv32i_pkg;
     localparam logic [2:0] F3_SH = 3'b001;
     localparam logic [2:0] F3_SW = 3'b010;
 
+    // ---- SYSTEM (opcode 0x73) -------------------------------------------
+    // funct3 == 000 selects a privileged operation, named by funct12; every
+    // other funct3 is a CSR access. See docs/traps.md.
+    localparam logic [2:0] F3_PRIV   = 3'b000;
+    localparam logic [2:0] F3_CSRRW  = 3'b001;
+    localparam logic [2:0] F3_CSRRS  = 3'b010;
+    localparam logic [2:0] F3_CSRRC  = 3'b011;
+    localparam logic [2:0] F3_CSRRWI = 3'b101;
+    localparam logic [2:0] F3_CSRRSI = 3'b110;
+    localparam logic [2:0] F3_CSRRCI = 3'b111;
+
+    localparam logic [11:0] F12_ECALL  = 12'h000;
+    localparam logic [11:0] F12_EBREAK = 12'h001;
+    localparam logic [11:0] F12_MRET   = 12'h302;
+
+    // ---- Machine-mode CSR addresses --------------------------------------
+    localparam logic [11:0] CSR_MSTATUS  = 12'h300;
+    localparam logic [11:0] CSR_MIE      = 12'h304;
+    localparam logic [11:0] CSR_MTVEC    = 12'h305;
+    localparam logic [11:0] CSR_MSCRATCH = 12'h340;
+    localparam logic [11:0] CSR_MEPC     = 12'h341;
+    localparam logic [11:0] CSR_MCAUSE   = 12'h342;
+    localparam logic [11:0] CSR_MTVAL    = 12'h343;
+    localparam logic [11:0] CSR_MIP      = 12'h344;
+    localparam logic [11:0] CSR_MCYCLE   = 12'hB00;
+    localparam logic [11:0] CSR_MINSTRET = 12'hB02;
+
+    // ---- Bit positions within mstatus / mie / mip -------------------------
+    localparam int MSTATUS_MIE_BIT  = 3;
+    localparam int MSTATUS_MPIE_BIT = 7;
+    localparam int IRQ_SOFT_BIT     = 3;    // MSIE / MSIP
+    localparam int IRQ_TIMER_BIT    = 7;    // MTIE / MTIP
+    localparam int IRQ_EXT_BIT      = 11;   // MEIE / MEIP
+
+    // ---- Trap causes ------------------------------------------------------
+    localparam logic [31:0] CAUSE_IRQ_SOFT  = 32'h8000_0003;
+    localparam logic [31:0] CAUSE_IRQ_TIMER = 32'h8000_0007;
+    localparam logic [31:0] CAUSE_IRQ_EXT   = 32'h8000_000B;
+    localparam logic [31:0] CAUSE_ECALL_M   = 32'h0000_0008;
+    localparam logic [31:0] CAUSE_BREAK     = 32'h0000_0003;
+
     // ---- funct7 bit 30 (SUB / SRA discriminator) -----------------------
     localparam logic F7_SUB_SRA_BIT = 1'b1;   // bit 30 of instruction
 
@@ -85,6 +126,15 @@ package rv32i_pkg;
         logic        auipc;        // AUIPC
         alu_op_t     alu_op;
         logic [2:0]  funct3;       // forwarded for load/store width and branch type
+        // `valid` distinguishes a real instruction from a flushed slot. A trap
+        // must not be taken on a bubble: mepc would name the zeroed PC of a
+        // killed instruction, and mret would return into nothing.
+        logic        valid;
+        logic        is_csr;       // a CSR read/modify/write
+        logic        csr_imm;      // operand is uimm[4:0] rather than rs1
+        logic        is_ecall;
+        logic        is_ebreak;
+        logic        is_mret;
     } ctrl_t;
 
     // NOP control word
@@ -100,7 +150,13 @@ package rv32i_pkg;
         lui:        1'b0,
         auipc:      1'b0,
         alu_op:     ALU_ADD,
-        funct3:     3'b000
+        funct3:     3'b000,
+        valid:      1'b0,
+        is_csr:     1'b0,
+        csr_imm:    1'b0,
+        is_ecall:   1'b0,
+        is_ebreak:  1'b0,
+        is_mret:    1'b0
     };
 
     // ---- Load alignment and extension ------------------------------------

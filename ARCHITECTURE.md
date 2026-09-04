@@ -1,6 +1,6 @@
 # Architecture
 
-Eight hardware modules and the two things that make them a system: a memory map
+Eight hardware projects and the two things that make three of them a system: a memory map
 generated for both sides of the hardware/software boundary, and a harness that
 knows how to build three HDLs. Each module's own design is in [`docs/`](docs);
 the SoC itself is in [`docs/soc.md`](docs/soc.md).
@@ -53,7 +53,7 @@ holds it, and the tests run it:
 
 - **Icarus cannot build the core.** It rejects a `localparam` assignment
   pattern in the RV32I package, so the core needs Verilator.
-- **Tools must run from the module's own directory.** Several modules
+- **Tools must run from the project's own directory.** Several designs
   `` `include `` a package by bare filename; from anywhere else it is not found.
 - **`ghdl -e` writes no binary** on the mcode backend Debian ships. VHDL is
   analysed with `-a` and run with `-r`, which elaborates in the same step.
@@ -67,6 +67,52 @@ Two recipes were wrong when first written down and the harness caught both: the
 Mandelbrot bench drives the whole design rather than the iterator, and the synth
 needs `-g2012` for a declaration inside an unnamed block.
 
+## Traps, and where they are taken
+
+The core gained machine-mode CSRs, `ECALL`/`EBREAK`/`MRET` and interrupts, and
+the [`clint`](modules/clint) gained a timer to fire them. The full behaviour is
+in [docs/traps.md](docs/traps.md); the design decision worth repeating here is
+*where in the pipeline a trap happens*.
+
+**At EX.** Branches resolve in EX and flush `IF/ID` and `ID/EX`, so an
+instruction that reaches EX has no older unresolved branch in front of it, and
+this core raises no exceptions later than EX. It will therefore retire — which
+makes a CSR write performed there non-speculative, and makes cancelling it for
+an interrupt free of side effects, because stores commit in MEM and register
+writes in WB.
+
+Taking interrupts one stage later would be a real bug rather than a style
+choice: a store commits in MEM, so cancelling an instruction there would set
+`mepc` to something that had *partly* executed, and `mret` would run it twice.
+
+### The bubble is a real instruction
+
+The trap logic needs to know whether the slot in EX holds an instruction or a
+pipeline bubble — `mepc` has to name something that can be returned to. That
+cannot be recovered by decoding, because the bubble this pipeline injects is
+`32'h0000_0013`, which *is* `ADDI x0, x0, 0`. A validity bit derived from the
+opcode alone marks every flush bubble as a real instruction.
+
+So `ifid_valid` is carried alongside `ifid_pc`, cleared by the same flush, and
+ANDed into the control word's `valid`. Without it the first interrupt after any
+redirect writes `mepc = 0` and `mret` returns into the reset vector — which
+presents as the program restarting rather than as a crash, and so is easy to
+mistake for a firmware bug.
+
+### A peripheral read must be synchronous
+
+The CLINT returns read data registered, one cycle after the address, because the
+SoC's read mux is registered one cycle behind the select — RAM and the UART both
+answer a cycle late. A combinational read is correct in isolation and wrong in
+the system: the mux selects the CLINT after the address bus has moved on, so a
+load returns the data belonging to the *next* access. A handler reading `mtime`
+then arms its next deadline from a number that is not a timestamp, and the timer
+appears to fire continuously.
+
+This is the same shape as the load-timing defect documented in
+[docs/soc.md](docs/soc.md), arriving from the peripheral's side instead of the
+core's.
+
 ## The cross-HDL check
 
 The AES S-box appears twice: Verilog in the accelerator, VHDL in the TRNG's
@@ -75,8 +121,8 @@ whitener. Same 256 bytes, two syntaxes, never compared.
 The test parses both — a case statement pairing index with value, and an ordered
 array — and asserts they agree, that each is a permutation of 0..255, and that
 the landmarks match FIPS-197 Figure 7. A single transposed digit would be
-invisible to inspection and fatal to the cipher, and this is the kind of check
-that only becomes possible when the two files are in one repository.
+invisible to inspection and fatal to the cipher, and neither project can make
+this check on its own — it needs both files at once.
 
 ## Test layout
 

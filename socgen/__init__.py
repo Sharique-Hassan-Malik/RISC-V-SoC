@@ -4,7 +4,7 @@
     memmap.write()                       # SV and C headers from one table
     firmware.write("program.hex")        # a program using those same addresses
 
-The eight hardware modules here are each complete on their own. What was
+The nine hardware modules here are each complete on their own. What was
 missing was the part that makes them a system: an address map both sides agree
 on, and one place that knows how to build and simulate three HDLs.
 """

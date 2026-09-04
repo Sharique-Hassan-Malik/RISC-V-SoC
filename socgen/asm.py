@@ -135,7 +135,69 @@ class Assembler:
     def nop(self) -> "Assembler":
         return self.addi("x0", "x0", 0)
 
+    # -- SYSTEM: CSRs and traps ---------------------------------------------
+    #
+    # A CSR address is a 12-bit *unsigned* index, so it goes into the
+    # instruction directly rather than through `_check_imm`, whose signed range
+    # stops at 0x7FF and would reject every counter CSR (0xB00 and up).
+
+    def _system(self, csr: int, rs1_or_uimm, funct3: int, rd) -> "Assembler":
+        if not 0 <= csr <= 0xFFF:
+            raise ValueError(f"CSR address {csr:#x} does not fit in 12 bits")
+        src = rs1_or_uimm if isinstance(rs1_or_uimm, int) and funct3 & 0b100 \
+            else _reg(rs1_or_uimm)
+        if funct3 & 0b100 and not 0 <= src <= 31:
+            raise ValueError(f"CSR immediate {src} does not fit in 5 bits")
+        return self._emit(
+            (csr << 20) | (src << 15) | (funct3 << 12) | (_reg(rd) << 7) | 0b1110011
+        )
+
+    def csrrw(self, rd, csr: int, rs1) -> "Assembler":
+        return self._system(csr, rs1, 0b001, rd)
+
+    def csrrs(self, rd, csr: int, rs1) -> "Assembler":
+        return self._system(csr, rs1, 0b010, rd)
+
+    def csrrc(self, rd, csr: int, rs1) -> "Assembler":
+        return self._system(csr, rs1, 0b011, rd)
+
+    def csrrwi(self, rd, csr: int, uimm: int) -> "Assembler":
+        return self._system(csr, uimm, 0b101, rd)
+
+    def csrrsi(self, rd, csr: int, uimm: int) -> "Assembler":
+        return self._system(csr, uimm, 0b110, rd)
+
+    def csrrci(self, rd, csr: int, uimm: int) -> "Assembler":
+        return self._system(csr, uimm, 0b111, rd)
+
+    def ecall(self) -> "Assembler":
+        return self._emit(0x0000_0073)
+
+    def ebreak(self) -> "Assembler":
+        return self._emit(0x0010_0073)
+
+    def mret(self) -> "Assembler":
+        return self._emit(0x3020_0073)
+
     # -- pseudo-instructions -------------------------------------------------
+
+    def csrw(self, csr: int, rs1) -> "Assembler":
+        """`csrw csr, rs1` — write, discarding the old value."""
+        return self.csrrw("x0", csr, rs1)
+
+    def csrr(self, rd, csr: int) -> "Assembler":
+        """`csrr rd, csr` — read. Assembles to CSRRS with rs1 = x0, which the
+        hardware must not treat as a write; that is what makes reading a
+        read-only CSR legal."""
+        return self.csrrs(rd, csr, "x0")
+
+    def csrs(self, csr: int, rs1) -> "Assembler":
+        """`csrs csr, rs1` — set the bits of rs1."""
+        return self.csrrs("x0", csr, rs1)
+
+    def csrc(self, csr: int, rs1) -> "Assembler":
+        """`csrc csr, rs1` — clear the bits of rs1."""
+        return self.csrrc("x0", csr, rs1)
 
     def li(self, rd, value: int) -> "Assembler":
         """Load a 32-bit constant.
